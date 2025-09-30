@@ -57,7 +57,8 @@ RUN pip3 install \
     click \
     opencv-python \
     Pillow \
-    requests  \
+    requests  
+    
 RUN echo 'user ALL=(ALL:ALL) NOPASSWD:ALL' >> /etc/sudoers
 RUN adduser root pulse-access
 RUN mkdir -p /var/run/dbus
