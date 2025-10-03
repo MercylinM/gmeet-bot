@@ -68,7 +68,7 @@ WORKDIR /app
 
 COPY . /app
 
-ENV BACKEND_URL="https://recos-add-on-backend.onrender.com"
+ENV BACKEND_URL="https://add-on-backend.onrender.com"
 ENV X_SERVER_NUM=1
 ENV SCREEN_WIDTH=1280
 ENV SCREEN_HEIGHT=1024
