@@ -8,12 +8,13 @@ import json
 import websockets
 import threading
 from time import sleep
+import re
+
 
 import undetected_chromedriver as uc
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
 
-uc.TARGET_VERSION = 136
 
 class RealtimeAudioStreamer:
     def __init__(self, backend_url):
@@ -138,7 +139,7 @@ class RealtimeAudioStreamer:
                 "pipe:1"
             ]
             
-            print(f"Starting real-time audio streaming for {duration_seconds} minutes...")
+            print(f"Starting real-time audio streaming for {duration_seconds} seconds...")
             self.stream_process = subprocess.Popen(
                 ffmpeg_command,
                 stdout=subprocess.PIPE,
@@ -208,6 +209,7 @@ class RealtimeAudioStreamer:
         print("Real-time streaming stopped")
 
 
+
 def make_request(url, headers, method="GET", data=None, files=None):
     if method == "POST":
         response = requests.post(url, headers=headers, json=data, files=files)
@@ -216,12 +218,14 @@ def make_request(url, headers, method="GET", data=None, files=None):
     return response.json()
 
 
+
 async def run_command_async(command):
     process = await asyncio.create_subprocess_shell(
         command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
     )
     stdout, stderr = await process.communicate()
     return stdout, stderr
+
 
 
 async def google_sign_in(email, password, driver):
@@ -245,12 +249,37 @@ async def google_sign_in(email, password, driver):
     driver.save_screenshot("screenshots/signed_in.png")
 
 
+
+def get_chrome_version():
+    """Try to detect the installed Chrome version"""
+    try:
+        if os.name == 'nt': 
+            cmd = 'reg query "HKEY_CURRENT_USER\\Software\\Google\\Chrome\\BLBeacon" /v version'
+        else: 
+            cmd = 'google-chrome --version || chromium-browser --version || chromium --version'
+        
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if result.returncode == 0:
+            match = re.search(r'(\d+\.\d+\.\d+\.\d+)', result.stdout)
+            if match:
+                version_str = match.group(1)
+                # Get the major version number
+                major_version = int(version_str.split('.')[0])
+                return major_version
+    except Exception as e:
+        print(f"Error detecting Chrome version: {e}")
+    
+    return 136
+
+
+
 async def join_meet():
     meet_link = os.getenv("GMEET_LINK", "https://meet.google.com/mhj-bcdx-bgu")
     backend_url = os.getenv("BACKEND_URL", "http://localhost:3000")
     
     print(f"Starting recorder for {meet_link}")
     print(f"Using backend: {backend_url}")
+
 
     try:
         health_response = requests.get(f"{backend_url}/health", timeout=5)
@@ -262,6 +291,7 @@ async def join_meet():
         print(f"Cannot connect to backend: {e}")
         return
 
+
     print("Cleaning screenshots")
     if os.path.exists("screenshots"):
         for f in os.listdir("screenshots"):
@@ -269,34 +299,41 @@ async def join_meet():
     else:
         os.mkdir("screenshots")
 
+
     print("Starting virtual audio drivers")
     try:
-        subprocess.check_output(
-            "sudo rm -rf /var/run/pulse /var/lib/pulse /root/.config/pulse", shell=True
-        )
-        subprocess.check_output(
-            "sudo pulseaudio -D --verbose --exit-idle-time=-1 --system --disallow-exit >> /dev/null 2>&1",
-            shell=True,
-        )
-        subprocess.check_output(
-            'sudo pactl load-module module-null-sink sink_name=DummyOutput sink_properties=device.description="Virtual_Dummy_Output"',
-            shell=True,
-        )
-        subprocess.check_output(
-            'sudo pactl load-module module-null-sink sink_name=MicOutput sink_properties=device.description="Virtual_Microphone_Output"',
-            shell=True,
-        )
-        subprocess.check_output(
-            "sudo pactl set-default-source MicOutput.monitor", shell=True
-        )
-        subprocess.check_output("sudo pactl set-default-sink MicOutput", shell=True)
-        subprocess.check_output(
-            "sudo pactl load-module module-virtual-source source_name=VirtualMic",
-            shell=True,
-        )
-        print("Audio drivers configured")
-    except subprocess.CalledProcessError as e:
+        try:
+            subprocess.check_output(
+                "pulseaudio -D --verbose --exit-idle-time=-1 --disallow-exit >> /dev/null 2>&1",
+                shell=True,
+            )
+        except:
+            print("Could not start pulseaudio without sudo")
+            
+        try:
+            subprocess.check_output(
+                'pactl load-module module-null-sink sink_name=DummyOutput sink_properties=device.description="Virtual_Dummy_Output"',
+                shell=True,
+            )
+            subprocess.check_output(
+                'pactl load-module module-null-sink sink_name=MicOutput sink_properties=device.description="Virtual_Microphone_Output"',
+                shell=True,
+            )
+            subprocess.check_output(
+                "pactl set-default-source MicOutput.monitor", shell=True
+            )
+            subprocess.check_output("pactl set-default-sink MicOutput", shell=True)
+            subprocess.check_output(
+                "pactl load-module module-virtual-source source_name=VirtualMic",
+                shell=True,
+            )
+            print("Audio drivers configured without sudo")
+        except:
+            print("Warning: Could not configure audio drivers without sudo")
+            print("Audio recording may not work properly")
+    except Exception as e:
         print(f"Warning: Audio driver setup had issues: {e}")
+
 
     options = uc.ChromeOptions()
     options.add_argument("--use-fake-ui-for-media-stream")
@@ -307,22 +344,59 @@ async def join_meet():
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-application-cache")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--remote-debugging-port=9222") 
     log_path = "chromedriver.log"
 
-    driver = uc.Chrome(version_main=136, service_log_path=log_path, use_subprocess=False, options=options)
+    try:
+        chrome_version = get_chrome_version()
+        print(f"Detected Chrome version: {chrome_version}")
+        
+        driver = uc.Chrome(
+            version_main=chrome_version,
+            service_log_path=log_path, 
+            use_subprocess=False, 
+            options=options
+        )
+    except Exception as e:
+        print(f"Error initializing Chrome driver: {e}")
+        try:
+            driver = uc.Chrome(
+                version_main=136,  
+                service_log_path=log_path, 
+                use_subprocess=False, 
+                options=options
+            )
+        except Exception as e2:
+            print(f"Error with fallback Chrome driver: {e2}")
+            driver = uc.Chrome(
+                service_log_path=log_path, 
+                use_subprocess=False, 
+                options=options
+            )
+    
     driver.set_window_size(1920, 1080)
+
 
     email = os.getenv("GMAIL_USER_EMAIL", "")
     password = os.getenv("GMAIL_USER_PASSWORD", "")
 
+
     if email == "" or password == "":
-        print("No email or password specified")
+        print("Error: No email or password specified")
+        print("Please set the following environment variables:")
+        print("  export GMAIL_USER_EMAIL='your_email@gmail.com'")
+        print("  export GMAIL_USER_PASSWORD='your_password'")
+        print("Then run the script again.")
+        driver.quit()
         return
+
 
     print("Google Sign in")
     await google_sign_in(email, password, driver)
 
+
     driver.get(meet_link)
+
 
     driver.execute_cdp_cmd(
         "Browser.grantPermissions",
@@ -338,8 +412,10 @@ async def join_meet():
         },
     )
 
+
     print("Taking screenshot")
     driver.save_screenshot("screenshots/initial.png")
+
 
     try:
         driver.find_element(
@@ -350,10 +426,13 @@ async def join_meet():
     except:
         print("No popup")
 
+
     print("Disable microphone")
     sleep(10)
 
+
     missing_mic = False
+
 
     try:
         print("Try to dismiss missing mic")
@@ -361,11 +440,13 @@ async def join_meet():
         sleep(2)
         driver.save_screenshot("screenshots/missing_mic.png")
 
+
         with open("screenshots/webpage.html", "w") as f:
             f.write(driver.page_source)
         missing_mic = True
     except:
         pass
+
 
     try:
         print("Allow Microphone")
@@ -378,6 +459,7 @@ async def join_meet():
     except:
         print("No Allow Microphone popup")
 
+
     try:
         print("Try to disable microphone")
         driver.find_element(
@@ -387,10 +469,12 @@ async def join_meet():
     except:
         print("No microphone to disable")
 
+
     sleep(2)
     driver.save_screenshot("screenshots/disable_microphone.png")
 
-    print("📹 Disable camera")
+
+    print("Disable camera")
     if not missing_mic:
         driver.find_element(
             By.XPATH,
@@ -408,12 +492,14 @@ async def join_meet():
         ).click()
         sleep(2)
 
+
         driver.find_element(
             By.XPATH,
             '//*[@id="yDmH0d"]/c-wiz/div/div/div[14]/div[3]/div/div[2]/div[4]/div/div/div[2]/div[1]/div[1]/div[3]/label/input',
         ).send_keys("Recos AI Bot")
         sleep(2)
         driver.save_screenshot("screenshots/give_non_registered_name.png")
+
 
         sleep(5)
         driver.find_element(
@@ -426,20 +512,24 @@ async def join_meet():
         sleep(5)
         driver.save_screenshot("screenshots/authentification_already_done.png")
 
+
         driver.find_element(
             By.XPATH,
             '//*[@id="yDmH0d"]/c-wiz/div/div/div[14]/div[3]/div/div[2]/div[4]/div/div/div[2]/div[1]/div[2]/div[1]/div[1]/button',
         ).click()
         sleep(5)
 
+
     max_wait_minutes = int(os.getenv("MAX_WAITING_TIME_IN_MINUTES", "5"))
     now = datetime.datetime.now()
     max_time = now + datetime.timedelta(minutes=max_wait_minutes)
+
 
     joined = False
     while now < max_time and not joined:
         driver.save_screenshot("screenshots/joined.png")
         sleep(5)
+
 
         try:
             driver.find_element(
@@ -449,6 +539,7 @@ async def join_meet():
             driver.save_screenshot("screenshots/remove_popup.png")
         except:
             pass
+
 
         print("Try to click expand options")
         elements = driver.find_elements(By.CLASS_NAME, "VfPpkd-Bz112c-LgbsSe")
@@ -462,10 +553,13 @@ async def join_meet():
                 except:
                     pass
 
+
         driver.save_screenshot("screenshots/expand_options.png")
+
 
         sleep(2)
         print("Try to move to full screen")
+
 
         if expand_options:
             li_elements = driver.find_elements(
@@ -485,42 +579,55 @@ async def join_meet():
                     joined = True
                     break
 
+
         now = datetime.datetime.now()
+
 
     if not joined:
         print("Failed to join meeting within time limit")
         driver.quit()
         return
 
+
     print("Successfully joined meeting!")
+
 
     duration_minutes = int(os.getenv("DURATION_IN_MINUTES", "15"))
     duration_seconds = duration_minutes * 60
 
+
     audio_streamer = RealtimeAudioStreamer(backend_url)
+
 
     print("\nStarting recording and streaming...")
     print(f"Duration: {duration_minutes} minutes")
     
     streaming_thread = audio_streamer.start_realtime_streaming(duration_minutes)
 
+
     if not os.path.exists("recordings"):
         os.mkdir("recordings")
+
 
     print("Start recording video...")
     record_command = f"ffmpeg -y -video_size 1920x1080 -framerate 30 -f x11grab -i :99 -f pulse -i default -t {duration_seconds} -c:v libx264 -pix_fmt yuv420p -c:a aac -strict experimental recordings/output.mp4"
 
+
     await run_command_async(record_command)
+
 
     print("Video recording completed")
     
     streaming_thread.join(timeout=10)
 
+
     print("\nAll recordings completed!")
     print("Output saved to: recordings/output.mp4")
 
+
     driver.quit()
     print("Done!")
+
 
 
 if __name__ == "__main__":
