@@ -9,6 +9,7 @@ import websockets
 import threading
 from time import sleep
 import re
+import sys
 
 
 import undetected_chromedriver as uc
@@ -130,7 +131,6 @@ class RealtimeAudioStreamer:
             return
             
         try:
-            # Check if ffmpeg is available
             try:
                 subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
             except (subprocess.CalledProcessError, FileNotFoundError):
@@ -231,7 +231,6 @@ def make_request(url, headers, method="GET", data=None, files=None):
 
 
 async def run_command_async(command):
-    # Check if ffmpeg is available
     try:
         subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
     except (subprocess.CalledProcessError, FileNotFoundError):
@@ -272,25 +271,21 @@ async def google_sign_in(email, password, driver):
 def get_chrome_version():
     """Try to detect the installed Chrome version"""
     try:
-        # Try to get Chrome version from command line
-        if os.name == 'nt':  # Windows
+        if os.name == 'nt':  
             cmd = 'reg query "HKEY_CURRENT_USER\\Software\\Google\\Chrome\\BLBeacon" /v version'
-        else:  # Linux/Mac
+        else:  
             cmd = 'google-chrome --version || chromium-browser --version || chromium --version'
         
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         if result.returncode == 0:
-            # Extract version number from output
             match = re.search(r'(\d+\.\d+\.\d+\.\d+)', result.stdout)
             if match:
                 version_str = match.group(1)
-                # Get the major version number
                 major_version = int(version_str.split('.')[0])
                 return major_version
     except Exception as e:
         print(f"Error detecting Chrome version: {e}")
     
-    # Fallback to a recent version
     return 136
 
 
@@ -324,36 +319,59 @@ async def join_meet():
 
     print("Starting virtual audio drivers")
     try:
-        # Try without sudo first
         try:
             subprocess.check_output(
-                "pulseaudio -D --verbose --exit-idle-time=-1 --disallow-exit >> /dev/null 2>&1",
-                shell=True,
-            )
-        except:
-            print("Could not start pulseaudio without sudo")
-            
-        try:
-            subprocess.check_output(
-                'pactl load-module module-null-sink sink_name=DummyOutput sink_properties=device.description="Virtual_Dummy_Output"',
+                "sudo rm -rf /var/run/pulse /var/lib/pulse /root/.config/pulse",
                 shell=True,
             )
             subprocess.check_output(
-                'pactl load-module module-null-sink sink_name=MicOutput sink_properties=device.description="Virtual_Microphone_Output"',
+                "sudo pulseaudio -D --verbose --exit-idle-time=-1 --system --disallow-exit >> /dev/null 2>&1",
                 shell=True,
             )
             subprocess.check_output(
-                "pactl set-default-source MicOutput.monitor", shell=True
-            )
-            subprocess.check_output("pactl set-default-sink MicOutput", shell=True)
-            subprocess.check_output(
-                "pactl load-module module-virtual-source source_name=VirtualMic",
+                'sudo pactl load-module module-null-sink sink_name=DummyOutput sink_properties=device.description="Virtual_Dummy_Output"',
                 shell=True,
             )
-            print("Audio drivers configured without sudo")
-        except:
-            print("Warning: Could not configure audio drivers without sudo")
-            print("Audio recording may not work properly")
+            subprocess.check_output(
+                'sudo pactl load-module module-null-sink sink_name=MicOutput sink_properties=device.description="Virtual_Microphone_Output"',
+                shell=True,
+            )
+            subprocess.check_output(
+                "sudo pactl set-default-source MicOutput.monitor", shell=True
+            )
+            subprocess.check_output("sudo pactl set-default-sink MicOutput", shell=True)
+            subprocess.check_output(
+                "sudo pactl load-module module-virtual-source source_name=VirtualMic",
+                shell=True,
+            )
+            print("Audio drivers configured with sudo")
+        except subprocess.CalledProcessError as e:
+            print(f"Warning: Audio driver setup had issues with sudo: {e}")
+            try:
+                subprocess.check_output(
+                    "pulseaudio -D --verbose --exit-idle-time=-1 --disallow-exit >> /dev/null 2>&1",
+                    shell=True,
+                )
+                subprocess.check_output(
+                    'pactl load-module module-null-sink sink_name=DummyOutput sink_properties=device.description="Virtual_Dummy_Output"',
+                    shell=True,
+                )
+                subprocess.check_output(
+                    'pactl load-module module-null-sink sink_name=MicOutput sink_properties=device.description="Virtual_Microphone_Output"',
+                    shell=True,
+                )
+                subprocess.check_output(
+                    "pactl set-default-source MicOutput.monitor", shell=True
+                )
+                subprocess.check_output("pactl set-default-sink MicOutput", shell=True)
+                subprocess.check_output(
+                    "pactl load-module module-virtual-source source_name=VirtualMic",
+                    shell=True,
+                )
+                print("Audio drivers configured without sudo")
+            except:
+                print("Warning: Could not configure audio drivers")
+                print("Audio recording may not work properly")
     except Exception as e:
         print(f"Warning: Audio driver setup had issues: {e}")
 
@@ -367,16 +385,13 @@ async def join_meet():
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-application-cache")
     options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--remote-debugging-port=9222")  # Added for better debugging
+    options.add_argument("--remote-debugging-port=9222")  
     log_path = "chromedriver.log"
 
-    # Fix for Chrome 136+ - properly initialize the driver with the correct version
     try:
-        # Try to detect the installed Chrome version
         chrome_version = get_chrome_version()
         print(f"Detected Chrome version: {chrome_version}")
         
-        # Initialize the driver with the detected version
         driver = uc.Chrome(
             version_main=chrome_version,
             service_log_path=log_path, 
@@ -385,17 +400,15 @@ async def join_meet():
         )
     except Exception as e:
         print(f"Error initializing Chrome driver: {e}")
-        # Fallback to using a recent version
         try:
             driver = uc.Chrome(
-                version_main=136,  # Fallback to 136 if detection fails
+                version_main=136,  
                 service_log_path=log_path, 
                 use_subprocess=False, 
                 options=options
             )
         except Exception as e2:
             print(f"Error with fallback Chrome driver: {e2}")
-            # Last resort - try without specifying version
             driver = uc.Chrome(
                 service_log_path=log_path, 
                 use_subprocess=False, 
@@ -424,9 +437,8 @@ async def join_meet():
 
 
     driver.get(meet_link)
-    sleep(5)  # Give the page time to load
+    sleep(5)  
 
-    # Fixed: Removed the problematic permission
     try:
         driver.execute_cdp_cmd(
             "Browser.grantPermissions",
@@ -505,7 +517,7 @@ async def join_meet():
     driver.save_screenshot("screenshots/disable_microphone.png")
 
 
-    print("📹 Disable camera")
+    print("Disable camera")
     if not missing_mic:
         driver.find_element(
             By.XPATH,
@@ -568,14 +580,11 @@ async def join_meet():
         driver.save_screenshot("screenshots/name_error.png")
 
 
-    # Handle all possible join buttons with comprehensive selectors
     try:
         print("Looking for any join button...")
         wait = WebDriverWait(driver, 10)
         
-        # Try multiple selectors for all possible join buttons
         join_button_selectors = [
-            # Ask to join buttons
             "//span[contains(text(), 'Ask to join')]",
             "//button[contains(text(), 'Ask to join')]",
             "//div[contains(text(), 'Ask to join')]",
@@ -587,7 +596,6 @@ async def join_meet():
             "//button[contains(@data-tooltip, 'Ask to join')]",
             "//div[contains(@data-tooltip, 'Ask to join')]",
             
-            # Join now buttons
             "//span[contains(text(), 'Join now')]",
             "//button[contains(text(), 'Join now')]",
             "//div[contains(text(), 'Join now')]",
@@ -596,7 +604,6 @@ async def join_meet():
             "//button[contains(@data-tooltip, 'Join now')]",
             "//div[contains(@data-tooltip, 'Join now')]",
             
-            # General join buttons
             "//span[contains(text(), 'Join')]",
             "//button[contains(text(), 'Join')]",
             "//div[contains(text(), 'Join')]",
@@ -605,7 +612,6 @@ async def join_meet():
             "//button[contains(@data-tooltip, 'Join')]",
             "//div[contains(@data-tooltip, 'Join')]",
             
-            # Continue buttons
             "//span[contains(text(), 'Continue')]",
             "//button[contains(text(), 'Continue')]",
             "//div[contains(text(), 'Continue')]",
@@ -634,16 +640,13 @@ async def join_meet():
         print(f"Error handling join button: {e}")
         driver.save_screenshot("screenshots/join_button_error.png")
 
-    # Wait for the meeting to load after clicking join
     print("Waiting for meeting to load...")
     sleep(10)
     driver.save_screenshot("screenshots/meeting_loading.png")
 
-    # Check if we're in the meeting by looking for meeting indicators
     try:
         wait = WebDriverWait(driver, 10)
         
-        # Try multiple selectors for meeting indicators
         meeting_indicators = [
             "//div[contains(@data-self-name, 'Recos AI Bot')]",
             "//span[contains(text(), 'You')]",
@@ -676,12 +679,10 @@ async def join_meet():
         print(f"Error checking meeting status: {e}")
         driver.save_screenshot("screenshots/meeting_status_error.png")
 
-    # Try to go fullscreen with a simpler approach
     try:
         print("Attempting to go fullscreen...")
         sleep(5)
         
-        # Try pressing F11 to go fullscreen
         driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.F11)
         sleep(2)
         driver.save_screenshot("screenshots/fullscreen_attempt.png")
@@ -729,7 +730,56 @@ async def join_meet():
 
 
 
+async def start_bot_from_frontend(meet_link=None, duration_minutes=15):
+    """
+    Start the bot from the frontend
+    Args:
+        meet_link: Google Meet link (optional, will use environment variable if not provided)
+        duration_minutes: Duration in minutes (optional, defaults to 15)
+    """
+    backend_url = os.getenv("BACKEND_URL", "http://localhost:3000")
+    
+    if meet_link:
+        os.environ["GMEET_LINK"] = meet_link
+    
+    os.environ["DURATION_IN_MINUTES"] = str(duration_minutes)
+    
+    try:
+        response = requests.post(
+            f"{backend_url}/api/bot/status",
+            json={"status": "starting", "meet_link": meet_link, "duration": duration_minutes}
+        )
+        if response.status_code == 200:
+            print("Notified backend about bot start")
+    except Exception as e:
+        print(f"Could not notify backend: {e}")
+    
+    await join_meet()
+    
+    try:
+        response = requests.post(
+            f"{backend_url}/api/bot/status",
+            json={"status": "finished", "meet_link": meet_link}
+        )
+        if response.status_code == 200:
+            print("Notified backend about bot finish")
+    except Exception as e:
+        print(f"Could not notify backend: {e}")
+
+
+@click.command()
+@click.option('--meet-link', help='Google Meet link')
+@click.option('--duration', default=15, help='Duration in minutes')
+@click.option('--frontend', is_flag=True, help='Start from frontend API')
+def main(meet_link, duration, frontend):
+    if frontend:
+        asyncio.run(start_bot_from_frontend(meet_link, duration))
+    else:
+        if meet_link:
+            os.environ["GMEET_LINK"] = meet_link
+        os.environ["DURATION_IN_MINUTES"] = str(duration)
+        asyncio.run(join_meet())
+
+
 if __name__ == "__main__":
-    click.echo("Starting Recos AI Bot - Google Meet recorder with real-time streaming...")
-    asyncio.run(join_meet())
-    click.echo("Finished recording Google Meet.")
+    main()
