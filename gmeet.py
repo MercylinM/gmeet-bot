@@ -14,6 +14,9 @@ import re
 import undetected_chromedriver as uc
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
 
 class RealtimeAudioStreamer:
@@ -127,6 +130,14 @@ class RealtimeAudioStreamer:
             return
             
         try:
+            # Check if ffmpeg is available
+            try:
+                subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                print("Error: ffmpeg is not installed or not in PATH")
+                print("Please install ffmpeg with: sudo apt install ffmpeg")
+                return
+                
             ffmpeg_command = [
                 "ffmpeg",
                 "-f", "pulse",
@@ -220,6 +231,14 @@ def make_request(url, headers, method="GET", data=None, files=None):
 
 
 async def run_command_async(command):
+    # Check if ffmpeg is available
+    try:
+        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("Error: ffmpeg is not installed or not in PATH")
+        print("Please install ffmpeg with: sudo apt install ffmpeg")
+        return None, None
+        
     process = await asyncio.create_subprocess_shell(
         command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
     )
@@ -253,13 +272,15 @@ async def google_sign_in(email, password, driver):
 def get_chrome_version():
     """Try to detect the installed Chrome version"""
     try:
-        if os.name == 'nt': 
+        # Try to get Chrome version from command line
+        if os.name == 'nt':  # Windows
             cmd = 'reg query "HKEY_CURRENT_USER\\Software\\Google\\Chrome\\BLBeacon" /v version'
-        else: 
+        else:  # Linux/Mac
             cmd = 'google-chrome --version || chromium-browser --version || chromium --version'
         
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         if result.returncode == 0:
+            # Extract version number from output
             match = re.search(r'(\d+\.\d+\.\d+\.\d+)', result.stdout)
             if match:
                 version_str = match.group(1)
@@ -269,6 +290,7 @@ def get_chrome_version():
     except Exception as e:
         print(f"Error detecting Chrome version: {e}")
     
+    # Fallback to a recent version
     return 136
 
 
@@ -302,6 +324,7 @@ async def join_meet():
 
     print("Starting virtual audio drivers")
     try:
+        # Try without sudo first
         try:
             subprocess.check_output(
                 "pulseaudio -D --verbose --exit-idle-time=-1 --disallow-exit >> /dev/null 2>&1",
@@ -344,13 +367,16 @@ async def join_meet():
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-application-cache")
     options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--remote-debugging-port=9222") 
+    options.add_argument("--remote-debugging-port=9222")  # Added for better debugging
     log_path = "chromedriver.log"
 
+    # Fix for Chrome 136+ - properly initialize the driver with the correct version
     try:
+        # Try to detect the installed Chrome version
         chrome_version = get_chrome_version()
         print(f"Detected Chrome version: {chrome_version}")
         
+        # Initialize the driver with the detected version
         driver = uc.Chrome(
             version_main=chrome_version,
             service_log_path=log_path, 
@@ -359,15 +385,17 @@ async def join_meet():
         )
     except Exception as e:
         print(f"Error initializing Chrome driver: {e}")
+        # Fallback to using a recent version
         try:
             driver = uc.Chrome(
-                version_main=136,  
+                version_main=136,  # Fallback to 136 if detection fails
                 service_log_path=log_path, 
                 use_subprocess=False, 
                 options=options
             )
         except Exception as e2:
             print(f"Error with fallback Chrome driver: {e2}")
+            # Last resort - try without specifying version
             driver = uc.Chrome(
                 service_log_path=log_path, 
                 use_subprocess=False, 
@@ -396,21 +424,24 @@ async def join_meet():
 
 
     driver.get(meet_link)
+    sleep(5)  # Give the page time to load
 
-
-    driver.execute_cdp_cmd(
-        "Browser.grantPermissions",
-        {
-            "origin": meet_link,
-            "permissions": [
-                "geolocation",
-                "audioCapture",
-                "displayCapture",
-                "videoCapture",
-                "videoCapturePanTiltZoom",
-            ],
-        },
-    )
+    # Fixed: Removed the problematic permission
+    try:
+        driver.execute_cdp_cmd(
+            "Browser.grantPermissions",
+            {
+                "origin": meet_link,
+                "permissions": [
+                    "geolocation",
+                    "audioCapture",
+                    "displayCapture",
+                    "videoCapture"
+                ],
+            },
+        )
+    except Exception as e:
+        print(f"Warning: Could not grant permissions: {e}")
 
 
     print("Taking screenshot")
@@ -474,7 +505,7 @@ async def join_meet():
     driver.save_screenshot("screenshots/disable_microphone.png")
 
 
-    print("Disable camera")
+    print("📹 Disable camera")
     if not missing_mic:
         driver.find_element(
             By.XPATH,
@@ -486,110 +517,178 @@ async def join_meet():
     driver.save_screenshot("screenshots/disable_camera.png")
     
     try:
-        driver.find_element(
-            By.XPATH,
+        print("Try to set name")
+        name_input_selectors = [
             '//*[@id="yDmH0d"]/c-wiz/div/div/div[14]/div[3]/div/div[2]/div[4]/div/div/div[2]/div[1]/div[1]/div[3]/label/input',
-        ).click()
-        sleep(2)
-
-
-        driver.find_element(
-            By.XPATH,
-            '//*[@id="yDmH0d"]/c-wiz/div/div/div[14]/div[3]/div/div[2]/div[4]/div/div/div[2]/div[1]/div[1]/div[3]/label/input',
-        ).send_keys("Recos AI Bot")
-        sleep(2)
-        driver.save_screenshot("screenshots/give_non_registered_name.png")
-
-
-        sleep(5)
-        driver.find_element(
-            By.XPATH,
-            '//*[@id="yDmH0d"]/c-wiz/div/div/div[14]/div[3]/div/div[2]/div[4]/div/div/div[2]/div[1]/div[2]/div[1]/div[1]/button/span',
-        ).click()
-        sleep(5)
-    except:
-        print("authentification already done")
-        sleep(5)
-        driver.save_screenshot("screenshots/authentification_already_done.png")
-
-
-        driver.find_element(
-            By.XPATH,
-            '//*[@id="yDmH0d"]/c-wiz/div/div/div[14]/div[3]/div/div[2]/div[4]/div/div/div[2]/div[1]/div[2]/div[1]/div[1]/button',
-        ).click()
-        sleep(5)
-
-
-    max_wait_minutes = int(os.getenv("MAX_WAITING_TIME_IN_MINUTES", "5"))
-    now = datetime.datetime.now()
-    max_time = now + datetime.timedelta(minutes=max_wait_minutes)
-
-
-    joined = False
-    while now < max_time and not joined:
-        driver.save_screenshot("screenshots/joined.png")
-        sleep(5)
-
-
-        try:
-            driver.find_element(
-                By.XPATH,
-                "/html/body/div[1]/div[3]/span/div[2]/div/div/div[2]/div[1]/button",
-            ).click()
-            driver.save_screenshot("screenshots/remove_popup.png")
-        except:
-            pass
-
-
-        print("Try to click expand options")
-        elements = driver.find_elements(By.CLASS_NAME, "VfPpkd-Bz112c-LgbsSe")
-        expand_options = False
-        for element in elements:
-            if element.get_attribute("aria-label") == "More options":
+            '//input[@type="text"]',
+            '//input[contains(@placeholder, "Your name")]',
+            '//input[contains(@aria-label, "Your name")]'
+        ]
+        
+        name_set = False
+        for selector in name_input_selectors:
+            try:
+                name_input = driver.find_element(By.XPATH, selector)
+                name_input.click()
+                sleep(1)
+                name_input.send_keys("Recos AI Bot")
+                sleep(2)
+                driver.save_screenshot("screenshots/give_non_registered_name.png")
+                name_set = True
+                break
+            except:
+                continue
+        
+        if name_set:
+            print("Name set successfully")
+            join_button_selectors = [
+                '//*[@id="yDmH0d"]/c-wiz/div/div/div[14]/div[3]/div/div[2]/div[4]/div/div/div[2]/div[1]/div[2]/div[1]/div[1]/button/span',
+                '//button[contains(text(), "Join now")]',
+                '//button[contains(text(), "Ask to join")]',
+                '//button[contains(text(), "Continue")]',
+                '//button[contains(text(), "Join")]'
+            ]
+            
+            button_clicked = False
+            for selector in join_button_selectors:
                 try:
-                    element.click()
-                    expand_options = True
-                    print("Expand options clicked")
+                    join_button = driver.find_element(By.XPATH, selector)
+                    join_button.click()
+                    sleep(5)
+                    driver.save_screenshot("screenshots/join_button_clicked.png")
+                    button_clicked = True
+                    break
                 except:
-                    pass
+                    continue
+            
+            if not button_clicked:
+                print("Could not find or click the join button")
+    except Exception as e:
+        print(f"Error setting name: {e}")
+        driver.save_screenshot("screenshots/name_error.png")
 
 
-        driver.save_screenshot("screenshots/expand_options.png")
+    # Handle all possible join buttons with comprehensive selectors
+    try:
+        print("Looking for any join button...")
+        wait = WebDriverWait(driver, 10)
+        
+        # Try multiple selectors for all possible join buttons
+        join_button_selectors = [
+            # Ask to join buttons
+            "//span[contains(text(), 'Ask to join')]",
+            "//button[contains(text(), 'Ask to join')]",
+            "//div[contains(text(), 'Ask to join')]",
+            "//span[contains(text(), 'Request to join')]",
+            "//button[contains(text(), 'Request to join')]",
+            "//div[contains(text(), 'Request to join')]",
+            "//button[contains(@aria-label, 'Ask to join')]",
+            "//div[contains(@aria-label, 'Ask to join')]",
+            "//button[contains(@data-tooltip, 'Ask to join')]",
+            "//div[contains(@data-tooltip, 'Ask to join')]",
+            
+            # Join now buttons
+            "//span[contains(text(), 'Join now')]",
+            "//button[contains(text(), 'Join now')]",
+            "//div[contains(text(), 'Join now')]",
+            "//button[contains(@aria-label, 'Join now')]",
+            "//div[contains(@aria-label, 'Join now')]",
+            "//button[contains(@data-tooltip, 'Join now')]",
+            "//div[contains(@data-tooltip, 'Join now')]",
+            
+            # General join buttons
+            "//span[contains(text(), 'Join')]",
+            "//button[contains(text(), 'Join')]",
+            "//div[contains(text(), 'Join')]",
+            "//button[contains(@aria-label, 'Join')]",
+            "//div[contains(@aria-label, 'Join')]",
+            "//button[contains(@data-tooltip, 'Join')]",
+            "//div[contains(@data-tooltip, 'Join')]",
+            
+            # Continue buttons
+            "//span[contains(text(), 'Continue')]",
+            "//button[contains(text(), 'Continue')]",
+            "//div[contains(text(), 'Continue')]",
+            "//button[contains(@aria-label, 'Continue')]",
+            "//div[contains(@aria-label, 'Continue')]",
+            "//button[contains(@data-tooltip, 'Continue')]",
+            "//div[contains(@data-tooltip, 'Continue')]"
+        ]
+        
+        joined = False
+        for selector in join_button_selectors:
+            try:
+                join_button = wait.until(EC.element_to_be_clickable((By.XPATH, selector)))
+                join_button.click()
+                print(f"Clicked join button using selector: {selector}")
+                driver.save_screenshot("screenshots/join_button_clicked.png")
+                joined = True
+                break
+            except TimeoutException:
+                continue
+        
+        if not joined:
+            print("Could not find any join button")
+            driver.save_screenshot("screenshots/no_join_button.png")
+    except Exception as e:
+        print(f"Error handling join button: {e}")
+        driver.save_screenshot("screenshots/join_button_error.png")
 
+    # Wait for the meeting to load after clicking join
+    print("Waiting for meeting to load...")
+    sleep(10)
+    driver.save_screenshot("screenshots/meeting_loading.png")
 
+    # Check if we're in the meeting by looking for meeting indicators
+    try:
+        wait = WebDriverWait(driver, 10)
+        
+        # Try multiple selectors for meeting indicators
+        meeting_indicators = [
+            "//div[contains(@data-self-name, 'Recos AI Bot')]",
+            "//span[contains(text(), 'You')]",
+            "//div[contains(@aria-label, 'You are')]",
+            "//button[contains(@aria-label, 'Leave call')]",
+            "//button[contains(@data-tooltip, 'Leave call')]",
+            "//div[contains(text(), 'Meeting details')]",
+            "//div[contains(text(), 'People')]",
+            "//div[contains(text(), 'Chat')]",
+            "//div[contains(text(), 'Activities')]"
+        ]
+        
+        in_meeting = False
+        for selector in meeting_indicators:
+            try:
+                wait.until(EC.presence_of_element_located((By.XPATH, selector)))
+                in_meeting = True
+                print(f"Detected meeting using selector: {selector}")
+                break
+            except TimeoutException:
+                continue
+        
+        if in_meeting:
+            print("Successfully joined the meeting!")
+            driver.save_screenshot("screenshots/in_meeting.png")
+        else:
+            print("Could not confirm if in meeting, proceeding anyway...")
+            driver.save_screenshot("screenshots/meeting_status_unknown.png")
+    except Exception as e:
+        print(f"Error checking meeting status: {e}")
+        driver.save_screenshot("screenshots/meeting_status_error.png")
+
+    # Try to go fullscreen with a simpler approach
+    try:
+        print("Attempting to go fullscreen...")
+        sleep(5)
+        
+        # Try pressing F11 to go fullscreen
+        driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.F11)
         sleep(2)
-        print("Try to move to full screen")
-
-
-        if expand_options:
-            li_elements = driver.find_elements(
-                By.CLASS_NAME, "V4jiNc.VfPpkd-StrnGf-rymPhb-ibnC6b"
-            )
-            for li_element in li_elements:
-                txt = li_element.text.strip().lower()
-                if "fullscreen" in txt:
-                    li_element.click()
-                    print("Full Screen clicked")
-                    joined = True
-                    break
-                elif "minimize" in txt:
-                    joined = True
-                    break
-                elif "close_fullscreen" in txt:
-                    joined = True
-                    break
-
-
-        now = datetime.datetime.now()
-
-
-    if not joined:
-        print("Failed to join meeting within time limit")
-        driver.quit()
-        return
-
-
-    print("Successfully joined meeting!")
+        driver.save_screenshot("screenshots/fullscreen_attempt.png")
+        print("Pressed F11 to go fullscreen")
+    except Exception as e:
+        print(f"Error going fullscreen: {e}")
+        driver.save_screenshot("screenshots/fullscreen_error.png")
 
 
     duration_minutes = int(os.getenv("DURATION_IN_MINUTES", "15"))
