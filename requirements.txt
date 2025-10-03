@@ -1,6 +1,6 @@
 click==8.1.7
 selenium
-undetected-chromedriver==3.5.5
+undetected-chromedriver
 requests==2.31.0
 sounddevice==0.4.6
 opencv-python-headless==4.8.1.78
