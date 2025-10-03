@@ -14,7 +14,6 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
 
 uc.TARGET_VERSION = 136
-driver = uc.Chrome(version_main=136)
 
 class RealtimeAudioStreamer:
     def __init__(self, backend_url):
@@ -310,7 +309,7 @@ async def join_meet():
     options.add_argument("--disable-dev-shm-usage")
     log_path = "chromedriver.log"
 
-    driver = uc.Chrome(service_log_path=log_path, use_subprocess=False, options=options)
+    driver = uc.Chrome(version_main=136, service_log_path=log_path, use_subprocess=False, options=options)
     driver.set_window_size(1920, 1080)
 
     email = os.getenv("GMAIL_USER_EMAIL", "")
