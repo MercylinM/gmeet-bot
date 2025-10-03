@@ -13,6 +13,8 @@ import undetected_chromedriver as uc
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
 
+uc.TARGET_VERSION = 136
+driver = uc.Chrome(version_main=136)
 
 class RealtimeAudioStreamer:
     def __init__(self, backend_url):
@@ -246,7 +248,7 @@ async def google_sign_in(email, password, driver):
 
 async def join_meet():
     meet_link = os.getenv("GMEET_LINK", "https://meet.google.com/mhj-bcdx-bgu")
-    backend_url = os.getenv("BACKEND_URL", "http://localhost:10000")
+    backend_url = os.getenv("BACKEND_URL", "http://localhost:3000")
     
     print(f"Starting recorder for {meet_link}")
     print(f"Using backend: {backend_url}")

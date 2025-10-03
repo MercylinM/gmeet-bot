@@ -1,5 +1,5 @@
 click==8.1.7
-selenium==4.15.2
+selenium
 undetected-chromedriver==3.5.5
 requests==2.31.0
 sounddevice==0.4.6
