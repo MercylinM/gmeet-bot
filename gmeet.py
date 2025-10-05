@@ -28,6 +28,8 @@ class RealtimeAudioStreamer:
         self.is_streaming = False
         self.stream_process = None
         self.listen_task = None
+        self.bytes_transmitted = 0
+        self.last_activity_time = datetime.datetime.now()
         
     async def connect_websocket(self):
         """Connect to backend WebSocket for real-time audio streaming"""
@@ -44,7 +46,7 @@ class RealtimeAudioStreamer:
     async def _listen_for_transcripts(self):
         """Listen for transcript messages on the same WebSocket"""
         try:
-            while self.websocket and not self.websocket.closed:
+            while self.websocket and self._is_websocket_open():
                 try:
                     message = await asyncio.wait_for(
                         self.websocket.recv(),
@@ -58,6 +60,16 @@ class RealtimeAudioStreamer:
                     break
         except Exception as e:
             print(f"Error listening for transcripts: {e}")
+    
+    def _is_websocket_open(self):
+        """Check if the WebSocket connection is open"""
+        if not self.websocket:
+            return False
+        if hasattr(self.websocket, 'closed'):
+            return not self.websocket.closed
+        elif hasattr(self.websocket, 'state'):
+            return self.websocket.state == 1  
+        return False
     
     def handle_transcript_message(self, message):
         """Handle incoming transcript messages"""
@@ -89,12 +101,12 @@ class RealtimeAudioStreamer:
                     
                     print(f"\nENRICHED [{speaker}]: {transcript}")
                     if summary:
-                        print(f"   Summary: {summary}")
+                        print(f"Summary: {summary}")
                     if keywords:
-                        print(f"   Keywords: {', '.join(keywords)}")
+                        print(f"Keywords: {', '.join(keywords)}")
                     if questions:
                         for i, q in enumerate(questions, 1):
-                            print(f"   Question {i}: {q}")
+                            print(f"Question {i}: {q}")
                     print()
                         
             elif message_type == 'analysis_error':
@@ -132,35 +144,131 @@ class RealtimeAudioStreamer:
             
         try:
             try:
-                subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
+                subprocess.run(["sox", "--version"], capture_output=True, check=True)
             except (subprocess.CalledProcessError, FileNotFoundError):
-                print("Error: ffmpeg is not installed or not in PATH")
-                print("Please install ffmpeg with: sudo apt install ffmpeg")
+                print("Error: sox is not installed or not in PATH")
+                print("Please install sox with: apt install sox")
                 return
+            
+            audio_format = {
+                'format': 's16le',
+                'rate': 16000,
+                'channels': 1,
+                'bits': 16,
+                'encoding': 'signed-integer'
+            }
+            
+            audio_device = os.getenv("AUDIO_DEVICE", "default")
+            
+            if audio_device.startswith("pulseaudio:"):
+                device_name = audio_device.replace("pulseaudio:", "")
+                parec_command = [
+                    "parec",
+                    f"--format={audio_format['format']}",
+                    f"--rate={audio_format['rate']}",
+                    f"--channels={audio_format['channels']}",
+                    "--monitor-stream=false",
+                    device_name
+                ]
                 
-            ffmpeg_command = [
-                "ffmpeg",
-                "-f", "pulse",
-                "-i", "default",
-                "-t", str(duration_seconds),
-                "-ac", "1",              
-                "-ar", "16000",          
-                "-acodec", "pcm_s16le",  
-                "-f", "s16le",           
-                "pipe:1"
-            ]
+                sox_command = [
+                    "sox",
+                    "-q",
+                    "-t", "raw",
+                    "-r", str(audio_format['rate']),
+                    "-c", str(audio_format['channels']),
+                    "-b", str(audio_format['bits']),
+                    "-e", audio_format['encoding'],
+                    "-",
+                    "-t", "raw", "-"
+                ]
+                
+                print(f"Starting PulseAudio capture for device: {device_name}")
+                print(f"Parec command: {' '.join(parec_command)}")
+                print(f"Sox command: {' '.join(sox_command)}")
+                
+                parec_process = subprocess.Popen(
+                    parec_command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                
+                sox_process = subprocess.Popen(
+                    sox_command,
+                    stdin=parec_process.stdout,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                
+                self.stream_process = sox_process
+                
+            elif audio_device and "monitor" in audio_device:
+                parec_command = [
+                    "parec",
+                    f"--format={audio_format['format']}",
+                    f"--rate={audio_format['rate']}",
+                    f"--channels={audio_format['channels']}",
+                    "--monitor-stream=true",
+                    audio_device
+                ]
+                
+                sox_command = [
+                    "sox",
+                    "-q",
+                    "-t", "raw",
+                    "-r", str(audio_format['rate']),
+                    "-c", str(audio_format['channels']),
+                    "-b", str(audio_format['bits']),
+                    "-e", audio_format['encoding'],
+                    "-",
+                    "-t", "raw", "-"
+                ]
+                
+                print(f"Starting monitor capture for device: {audio_device}")
+                print(f"Parec command: {' '.join(parec_command)}")
+                print(f"Sox command: {' '.join(sox_command)}")
+                
+                parec_process = subprocess.Popen(
+                    parec_command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                
+                sox_process = subprocess.Popen(
+                    sox_command,
+                    stdin=parec_process.stdout,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                
+                self.stream_process = sox_process
+                
+            else:
+                sox_command = [
+                    "sox",
+                    "-q",
+                    "-d" if audio_device == "default" else audio_device,
+                    "-r", str(audio_format['rate']),
+                    "-c", str(audio_format['channels']),
+                    "-b", str(audio_format['bits']),
+                    "-e", audio_format['encoding'],
+                    "-t", "raw", "-"
+                ]
+                
+                print(f"Starting default capture for device: {audio_device}")
+                print(f"Sox command: {' '.join(sox_command)}")
+                
+                self.stream_process = subprocess.Popen(
+                    sox_command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
             
             print(f"Starting real-time audio streaming for {duration_seconds} seconds...")
-            self.stream_process = subprocess.Popen(
-                ffmpeg_command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                bufsize=0
-            )
             
             start_time = datetime.datetime.now()
-            chunk_size = 4096  
-            bytes_sent = 0
+            chunk_size = 4096
+            silence_timer = None
             
             while (self.is_streaming and 
                    self.stream_process and 
@@ -171,15 +279,23 @@ class RealtimeAudioStreamer:
                     await asyncio.sleep(0.01)
                     continue
                 
-                if self.websocket and not self.websocket.closed:
+                if self.websocket and self._is_websocket_open():
                     try:
                         await self.websocket.send(audio_data)
-                        bytes_sent += len(audio_data)
+                        self.bytes_transmitted += len(audio_data)
+                        self.last_activity_time = datetime.datetime.now()
+                        
+                        if silence_timer:
+                            silence_timer.cancel()
+                        
+                        silence_timer = asyncio.create_task(
+                            self._check_silence(300)  # 5 minutes
+                        )
                         
                         elapsed = (datetime.datetime.now() - start_time).total_seconds()
                         if int(elapsed) % 5 == 0 and elapsed > 0:
-                            mb_sent = bytes_sent / (1024 * 1024)
-                            print(f"Streaming: {mb_sent:.2f} MB sent in {int(elapsed)}s")
+                            kb_transmitted = self.bytes_transmitted / 1024
+                            print(f"📊 Streaming: {kb_transmitted:.2f} KB sent in {int(elapsed)}s")
                             
                     except Exception as e:
                         print(f"WebSocket send error: {e}")
@@ -194,6 +310,16 @@ class RealtimeAudioStreamer:
             print(f"Real-time streaming error: {e}")
         finally:
             await self.cleanup()
+    
+    async def _check_silence(self, max_silence_seconds):
+        """Check for silence and emit an event if detected"""
+        try:
+            await asyncio.sleep(max_silence_seconds)
+            time_since_last_activity = (datetime.datetime.now() - self.last_activity_time).total_seconds()
+            if time_since_last_activity >= max_silence_seconds:
+                print("No audio data for extended period, checking connection...")
+        except asyncio.CancelledError:
+            pass
     
     async def cleanup(self):
         """Clean up WebSocket connection and processes"""
@@ -210,7 +336,10 @@ class RealtimeAudioStreamer:
         
         if self.stream_process:
             self.stream_process.terminate()
-            self.stream_process.wait(timeout=5)
+            try:
+                self.stream_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.stream_process.kill()
             self.stream_process = None
             
         if self.websocket:
@@ -218,6 +347,7 @@ class RealtimeAudioStreamer:
             self.websocket = None
             
         print("Real-time streaming stopped")
+        print(f"Total bytes transmitted: {self.bytes_transmitted / 1024:.2f} KB")
 
 
 
@@ -227,22 +357,6 @@ def make_request(url, headers, method="GET", data=None, files=None):
     else:
         response = requests.get(url, headers=headers)
     return response.json()
-
-
-
-async def run_command_async(command):
-    try:
-        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        print("Error: ffmpeg is not installed or not in PATH")
-        print("Please install ffmpeg with: sudo apt install ffmpeg")
-        return None, None
-        
-    process = await asyncio.create_subprocess_shell(
-        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    )
-    stdout, stderr = await process.communicate()
-    return stdout, stderr
 
 
 
@@ -317,63 +431,18 @@ async def join_meet():
         os.mkdir("screenshots")
 
 
-    print("Starting virtual audio drivers")
+    print("Setting up audio recording with sox")
     try:
+        # Check if sox is available
         try:
-            subprocess.check_output(
-                "sudo rm -rf /var/run/pulse /var/lib/pulse /root/.config/pulse",
-                shell=True,
-            )
-            subprocess.check_output(
-                "sudo pulseaudio -D --verbose --exit-idle-time=-1 --system --disallow-exit >> /dev/null 2>&1",
-                shell=True,
-            )
-            subprocess.check_output(
-                'sudo pactl load-module module-null-sink sink_name=DummyOutput sink_properties=device.description="Virtual_Dummy_Output"',
-                shell=True,
-            )
-            subprocess.check_output(
-                'sudo pactl load-module module-null-sink sink_name=MicOutput sink_properties=device.description="Virtual_Microphone_Output"',
-                shell=True,
-            )
-            subprocess.check_output(
-                "sudo pactl set-default-source MicOutput.monitor", shell=True
-            )
-            subprocess.check_output("sudo pactl set-default-sink MicOutput", shell=True)
-            subprocess.check_output(
-                "sudo pactl load-module module-virtual-source source_name=VirtualMic",
-                shell=True,
-            )
-            print("Audio drivers configured with sudo")
-        except subprocess.CalledProcessError as e:
-            print(f"Warning: Audio driver setup had issues with sudo: {e}")
-            try:
-                subprocess.check_output(
-                    "pulseaudio -D --verbose --exit-idle-time=-1 --disallow-exit >> /dev/null 2>&1",
-                    shell=True,
-                )
-                subprocess.check_output(
-                    'pactl load-module module-null-sink sink_name=DummyOutput sink_properties=device.description="Virtual_Dummy_Output"',
-                    shell=True,
-                )
-                subprocess.check_output(
-                    'pactl load-module module-null-sink sink_name=MicOutput sink_properties=device.description="Virtual_Microphone_Output"',
-                    shell=True,
-                )
-                subprocess.check_output(
-                    "pactl set-default-source MicOutput.monitor", shell=True
-                )
-                subprocess.check_output("pactl set-default-sink MicOutput", shell=True)
-                subprocess.check_output(
-                    "pactl load-module module-virtual-source source_name=VirtualMic",
-                    shell=True,
-                )
-                print("Audio drivers configured without sudo")
-            except:
-                print("Warning: Could not configure audio drivers")
-                print("Audio recording may not work properly")
+            subprocess.run(["sox", "--version"], capture_output=True, check=True)
+            print("sox is available for audio recording")
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            print("Error: sox is not installed or not in PATH")
+            print("Please install sox with: apt install sox")
+            print("Audio recording will not work without sox")
     except Exception as e:
-        print(f"Warning: Audio driver setup had issues: {e}")
+        print(f"Warning: Audio setup had issues: {e}")
 
 
     options = uc.ChromeOptions()
@@ -586,38 +655,42 @@ async def join_meet():
         
         join_button_selectors = [
             "//span[contains(text(), 'Ask to join')]",
-            "//button[contains(text(), 'Ask to join')]",
-            "//div[contains(text(), 'Ask to join')]",
-            "//span[contains(text(), 'Request to join')]",
-            "//button[contains(text(), 'Request to join')]",
-            "//div[contains(text(), 'Request to join')]",
-            "//button[contains(@aria-label, 'Ask to join')]",
-            "//div[contains(@aria-label, 'Ask to join')]",
-            "//button[contains(@data-tooltip, 'Ask to join')]",
-            "//div[contains(@data-tooltip, 'Ask to join')]",
-            
             "//span[contains(text(), 'Join now')]",
-            "//button[contains(text(), 'Join now')]",
-            "//div[contains(text(), 'Join now')]",
-            "//button[contains(@aria-label, 'Join now')]",
-            "//div[contains(@aria-label, 'Join now')]",
-            "//button[contains(@data-tooltip, 'Join now')]",
-            "//div[contains(@data-tooltip, 'Join now')]",
-            
+            "//span[contains(text(), 'Switch here')]",
             "//span[contains(text(), 'Join')]",
-            "//button[contains(text(), 'Join')]",
-            "//div[contains(text(), 'Join')]",
-            "//button[contains(@aria-label, 'Join')]",
-            "//div[contains(@aria-label, 'Join')]",
-            "//button[contains(@data-tooltip, 'Join')]",
-            "//div[contains(@data-tooltip, 'Join')]",
-            
             "//span[contains(text(), 'Continue')]",
+            "//span[contains(text(), 'Request to join')]",
+
+            "//button[contains(text(), 'Ask to join')]",
+            "//button[contains(text(), 'Join now')]",
+            "//button[contains(text(), 'Request to join')]",
+            "//button[contains(text(), 'Join')]",
             "//button[contains(text(), 'Continue')]",
-            "//div[contains(text(), 'Continue')]",
+
+            "//button[contains(@aria-label, 'Join now')]",
+            "//button[contains(@aria-label, 'Ask to join')]",
+            "//button[contains(@aria-label, 'Join')]",
             "//button[contains(@aria-label, 'Continue')]",
-            "//div[contains(@aria-label, 'Continue')]",
+
+            "//button[contains(@data-tooltip, 'Ask to join')]",
+            "//button[contains(@data-tooltip, 'Join now')]",
+            "//button[contains(@data-tooltip, 'Join')]",
             "//button[contains(@data-tooltip, 'Continue')]",
+
+            "//div[contains(text(), 'Ask to join')]",
+            "//div[contains(text(), 'Request to join')]",
+            "//div[contains(text(), 'Join now')]",
+            "//div[contains(text(), 'Join')]",
+            "//div[contains(text(), 'Continue')]",
+            
+            "//div[contains(@aria-label, 'Ask to join')]",
+            "//div[contains(@aria-label, 'Join now')]",
+            "//div[contains(@aria-label, 'Join')]",
+            "//div[contains(@aria-label, 'Continue')]",
+            
+            "//div[contains(@data-tooltip, 'Ask to join')]",
+            "//div[contains(@data-tooltip, 'Join now')]",
+            "//div[contains(@data-tooltip, 'Join')]",
             "//div[contains(@data-tooltip, 'Continue')]"
         ]
         
@@ -705,24 +778,16 @@ async def join_meet():
     streaming_thread = audio_streamer.start_realtime_streaming(duration_minutes)
 
 
-    if not os.path.exists("recordings"):
-        os.mkdir("recordings")
+    print(f"Recording for {duration_minutes} minutes...")
+    await asyncio.sleep(duration_seconds)
 
 
-    print("Start recording video...")
-    record_command = f"ffmpeg -y -video_size 1920x1080 -framerate 30 -f x11grab -i :99 -f pulse -i default -t {duration_seconds} -c:v libx264 -pix_fmt yuv420p -c:a aac -strict experimental recordings/output.mp4"
-
-
-    await run_command_async(record_command)
-
-
-    print("Video recording completed")
+    print("\nRecording completed!")
     
     streaming_thread.join(timeout=10)
 
 
     print("\nAll recordings completed!")
-    print("Output saved to: recordings/output.mp4")
 
 
     driver.quit()
