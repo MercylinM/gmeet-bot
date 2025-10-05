@@ -34,7 +34,7 @@ echo "Xvfb started successfully on display :99"
 # Set display for all applications
 export DISPLAY=:99
 
-# Start pulseaudio in system mode (since running as root)
+# Start pulseaudio in system mode 
 echo "Starting PulseAudio in system mode..."
 pulseaudio --system --daemonize --log-level=4 --disallow-exit --disallow-module-loading=false
 

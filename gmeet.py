@@ -10,7 +10,8 @@ import threading
 from time import sleep
 import re
 import sys
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 
 import undetected_chromedriver as uc
 from selenium.webdriver.common.keys import Keys
@@ -19,36 +20,131 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
+app = Flask(__name__)
+CORS(app)
 
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    """Simple HTTP handler for health checks"""
-    def do_GET(self):
-        if self.path == '/health' or self.path == '/':
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            response = json.dumps({
-                'status': 'healthy',
-                'service': 'gmeet-bot',
-                'timestamp': datetime.datetime.now().isoformat()
+bot_state = {
+    'status': 'idle', 
+    'current_meeting': None,
+    'start_time': None,
+    'thread': None
+}
+
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({
+        'status': 'healthy',
+        'service': 'gmeet-bot',
+        'bot_status': bot_state['status'],
+        'current_meeting': bot_state['current_meeting'],
+        'uptime': (datetime.datetime.now() - bot_state['start_time']).total_seconds() if bot_state['start_time'] else 0
+    })
+
+@app.route('/start', methods=['POST'])
+def start_bot():
+    try:
+        if bot_state['status'] in ['running', 'starting']:
+            return jsonify({
+                'success': False,
+                'error': 'Bot is already running',
+                'status': bot_state['status']
+            }), 400
+
+        data = request.json
+        meet_link = data.get('meet_link') or data.get('meetLink')
+        duration = data.get('duration', 60)
+
+        if not meet_link:
+            return jsonify({
+                'success': False,
+                'error': 'Meeting link is required'
+            }), 400
+
+        # Update environment variables
+        os.environ['GMEET_LINK'] = meet_link
+        os.environ['DURATION_IN_MINUTES'] = str(duration)
+
+        # Start bot in background thread
+        bot_state['status'] = 'starting'
+        bot_state['current_meeting'] = meet_link
+        bot_state['start_time'] = datetime.datetime.now()
+
+        def run_bot():
+            try:
+                asyncio.run(join_meet())
+                bot_state['status'] = 'idle'
+                bot_state['current_meeting'] = None
+            except Exception as e:
+                print(f"Error in bot thread: {e}")
+                bot_state['status'] = 'error'
+
+        thread = threading.Thread(target=run_bot, daemon=True)
+        thread.start()
+        bot_state['thread'] = thread
+
+        return jsonify({
+            'success': True,
+            'status': 'starting',
+            'meet_link': meet_link,
+            'duration': duration,
+            'message': 'Bot is starting and will join the meeting shortly'
+        })
+
+    except Exception as e:
+        print(f"Error starting bot: {e}")
+        bot_state['status'] = 'error'
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/stop', methods=['POST'])
+def stop_bot():
+    try:
+        if bot_state['status'] == 'idle':
+            return jsonify({
+                'success': True,
+                'message': 'Bot is not running'
             })
-            self.wfile.write(response.encode())
-        else:
-            self.send_response(404)
-            self.end_headers()
-    
-    def log_message(self, format, *args):
-        # Suppress default logging
-        pass
 
+        bot_state['status'] = 'stopping'
+        # The bot will finish its current session naturally
+        # Or you could implement a more forceful shutdown
 
-def start_health_check_server(port=10000):
-    """Start a simple HTTP server for health checks"""
-    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    print(f"Health check server started on port {port}")
-    return server
+        return jsonify({
+            'success': True,
+            'message': 'Bot stop signal sent'
+        })
+
+    except Exception as e:
+        print(f"Error stopping bot: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/status', methods=['GET'])
+def get_status():
+    return jsonify({
+        'success': True,
+        'status': bot_state['status'],
+        'isRunning': bot_state['status'] == 'running',
+        'current_meeting': bot_state['current_meeting'],
+        'uptime': (datetime.datetime.now() - bot_state['start_time']).total_seconds() if bot_state['start_time'] else 0
+    })
+
+@app.route('/', methods=['GET'])
+def index():
+    return jsonify({
+        'service': 'Google Meet Bot',
+        'version': '1.0.0',
+        'endpoints': {
+            'health': '/health',
+            'start': 'POST /start',
+            'stop': 'POST /stop',
+            'status': '/status'
+        }
+    })
 
 
 class RealtimeAudioStreamer:
@@ -432,8 +528,7 @@ def get_chrome_version():
 
 
 async def join_meet():
-    port = int(os.getenv("PORT", "10000"))
-    health_server = start_health_check_server(port)
+    bot_state['status'] = 'running'
     
     meet_link = os.getenv("GMEET_LINK", "https://meet.google.com/mhj-bcdx-bgu")
     backend_url = os.getenv("BACKEND_URL", "http://localhost:3000")
@@ -787,51 +882,20 @@ async def join_meet():
     driver.quit()
     print("Done!")
 
-
-async def start_bot_from_frontend(meet_link=None, duration_minutes=15):
-    """
-    Start the bot from the frontend
-    Args:
-        meet_link: Google Meet link (optional, will use environment variable if not provided)
-        duration_minutes: Duration in minutes (optional, defaults to 15)
-    """
-    backend_url = os.getenv("BACKEND_URL", "http://localhost:3000")
-    
-    if meet_link:
-        os.environ["GMEET_LINK"] = meet_link
-    
-    os.environ["DURATION_IN_MINUTES"] = str(duration_minutes)
-    
-    try:
-        response = requests.post(
-            f"{backend_url}/api/bot/status",
-            json={"status": "starting", "meet_link": meet_link, "duration": duration_minutes}
-        )
-        if response.status_code == 200:
-            print("Notified backend about bot start")
-    except Exception as e:
-        print(f"Could not notify backend: {e}")
-    
-    await join_meet()
-    
-    try:
-        response = requests.post(
-            f"{backend_url}/api/bot/status",
-            json={"status": "finished", "meet_link": meet_link}
-        )
-        if response.status_code == 200:
-            print("Notified backend about bot finish")
-    except Exception as e:
-        print(f"Could not notify backend: {e}")
+def run_flask_server():
+    """Run Flask server in the main thread"""
+    port = int(os.getenv('PORT', 10000))
+    print(f"Starting Flask server on port {port}")
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 
 @click.command()
 @click.option('--meet-link', help='Google Meet link')
 @click.option('--duration', default=15, help='Duration in minutes')
 @click.option('--frontend', is_flag=True, help='Start from frontend API')
-def main(meet_link, duration, frontend):
-    if frontend:
-        asyncio.run(start_bot_from_frontend(meet_link, duration))
+def main(meet_link, duration, server):
+    if server or os.getenv('RUN_AS_SERVER', 'true').lower() == 'true':
+        run_flask_server()
     else:
         if meet_link:
             os.environ["GMEET_LINK"] = meet_link
