@@ -34,20 +34,22 @@ echo "Xvfb started successfully on display :99"
 # Set display for all applications
 export DISPLAY=:99
 
-# Start pulseaudio
-echo "Starting PulseAudio..."
-pulseaudio --start --log-level=4 --log-target=stderr &
-PULSE_PID=$!
+# Start pulseaudio in system mode (since running as root)
+echo "Starting PulseAudio in system mode..."
+pulseaudio --system --daemonize --log-level=4 --disallow-exit --disallow-module-loading=false
 
 # Wait for pulseaudio to initialize
 sleep 3
 
 # Verify pulseaudio is running
-if ! pulseaudio --check; then
+if pulseaudio --check 2>/dev/null || pgrep -x pulseaudio > /dev/null; then
+    echo "PulseAudio started successfully"
+    # Create a null sink for virtual audio
+    pactl load-module module-null-sink sink_name=virtual_speaker sink_properties=device.description="Virtual_Speaker" 2>/dev/null || echo "Could not create virtual sink"
+else
     echo "WARNING: PulseAudio may not be running properly"
     ps aux | grep pulse
-else
-    echo "PulseAudio started successfully"
+    echo "Attempting to continue without PulseAudio..."
 fi
 
 # List available audio devices for debugging

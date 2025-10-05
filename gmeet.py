@@ -10,7 +10,7 @@ import threading
 from time import sleep
 import re
 import sys
-
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import undetected_chromedriver as uc
 from selenium.webdriver.common.keys import Keys
@@ -18,6 +18,37 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
+
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    """Simple HTTP handler for health checks"""
+    def do_GET(self):
+        if self.path == '/health' or self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            response = json.dumps({
+                'status': 'healthy',
+                'service': 'gmeet-bot',
+                'timestamp': datetime.datetime.now().isoformat()
+            })
+            self.wfile.write(response.encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
+    
+    def log_message(self, format, *args):
+        # Suppress default logging
+        pass
+
+
+def start_health_check_server(port=10000):
+    """Start a simple HTTP server for health checks"""
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    print(f"Health check server started on port {port}")
+    return server
 
 
 class RealtimeAudioStreamer:
@@ -289,7 +320,7 @@ class RealtimeAudioStreamer:
                             silence_timer.cancel()
                         
                         silence_timer = asyncio.create_task(
-                            self._check_silence(300)  # 5 minutes
+                            self._check_silence(300)
                         )
                         
                         elapsed = (datetime.datetime.now() - start_time).total_seconds()
@@ -350,14 +381,12 @@ class RealtimeAudioStreamer:
         print(f"Total bytes transmitted: {self.bytes_transmitted / 1024:.2f} KB")
 
 
-
 def make_request(url, headers, method="GET", data=None, files=None):
     if method == "POST":
         response = requests.post(url, headers=headers, json=data, files=files)
     else:
         response = requests.get(url, headers=headers)
     return response.json()
-
 
 
 async def google_sign_in(email, password, driver):
@@ -381,7 +410,6 @@ async def google_sign_in(email, password, driver):
     driver.save_screenshot("screenshots/signed_in.png")
 
 
-
 def get_chrome_version():
     """Try to detect the installed Chrome version"""
     try:
@@ -400,17 +428,18 @@ def get_chrome_version():
     except Exception as e:
         print(f"Error detecting Chrome version: {e}")
     
-    return 136
-
+    return 108
 
 
 async def join_meet():
+    port = int(os.getenv("PORT", "10000"))
+    health_server = start_health_check_server(port)
+    
     meet_link = os.getenv("GMEET_LINK", "https://meet.google.com/mhj-bcdx-bgu")
     backend_url = os.getenv("BACKEND_URL", "http://localhost:3000")
     
     print(f"Starting recorder for {meet_link}")
     print(f"Using backend: {backend_url}")
-
 
     try:
         health_response = requests.get(f"{backend_url}/health", timeout=5)
@@ -418,10 +447,10 @@ async def join_meet():
             print(f"Backend is healthy: {health_response.json()}")
         else:
             print(f"Backend health check failed: {health_response.status_code}")
+            print("Continuing anyway...")
     except Exception as e:
         print(f"Cannot connect to backend: {e}")
-        return
-
+        print("Continuing anyway...")
 
     print("Cleaning screenshots")
     if os.path.exists("screenshots"):
@@ -430,20 +459,13 @@ async def join_meet():
     else:
         os.mkdir("screenshots")
 
-
     print("Setting up audio recording with sox")
     try:
-        # Check if sox is available
-        try:
-            subprocess.run(["sox", "--version"], capture_output=True, check=True)
-            print("sox is available for audio recording")
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            print("Error: sox is not installed or not in PATH")
-            print("Please install sox with: apt install sox")
-            print("Audio recording will not work without sox")
-    except Exception as e:
-        print(f"Warning: Audio setup had issues: {e}")
-
+        subprocess.run(["sox", "--version"], capture_output=True, check=True)
+        print("sox is available for audio recording")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("Error: sox is not installed or not in PATH")
+        print("Audio recording will not work without sox")
 
     options = uc.ChromeOptions()
     options.add_argument("--use-fake-ui-for-media-stream")
@@ -454,7 +476,7 @@ async def join_meet():
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-application-cache")
     options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--remote-debugging-port=9222")  
+    options.add_argument("--remote-debugging-port=9222")
     log_path = "chromedriver.log"
 
     try:
@@ -471,7 +493,7 @@ async def join_meet():
         print(f"Error initializing Chrome driver: {e}")
         try:
             driver = uc.Chrome(
-                version_main=136,  
+                version_main=108,
                 service_log_path=log_path, 
                 use_subprocess=False, 
                 options=options
@@ -486,10 +508,8 @@ async def join_meet():
     
     driver.set_window_size(1920, 1080)
 
-
     email = os.getenv("GMAIL_USER_EMAIL", "")
     password = os.getenv("GMAIL_USER_PASSWORD", "")
-
 
     if email == "" or password == "":
         print("Error: No email or password specified")
@@ -500,13 +520,11 @@ async def join_meet():
         driver.quit()
         return
 
-
     print("Google Sign in")
     await google_sign_in(email, password, driver)
 
-
     driver.get(meet_link)
-    sleep(5)  
+    sleep(5)
 
     try:
         driver.execute_cdp_cmd(
@@ -524,10 +542,8 @@ async def join_meet():
     except Exception as e:
         print(f"Warning: Could not grant permissions: {e}")
 
-
     print("Taking screenshot")
     driver.save_screenshot("screenshots/initial.png")
-
 
     try:
         driver.find_element(
@@ -538,13 +554,10 @@ async def join_meet():
     except:
         print("No popup")
 
-
     print("Disable microphone")
     sleep(10)
 
-
     missing_mic = False
-
 
     try:
         print("Try to dismiss missing mic")
@@ -552,13 +565,11 @@ async def join_meet():
         sleep(2)
         driver.save_screenshot("screenshots/missing_mic.png")
 
-
         with open("screenshots/webpage.html", "w") as f:
             f.write(driver.page_source)
         missing_mic = True
     except:
         pass
-
 
     try:
         print("Allow Microphone")
@@ -571,7 +582,6 @@ async def join_meet():
     except:
         print("No Allow Microphone popup")
 
-
     try:
         print("Try to disable microphone")
         driver.find_element(
@@ -581,10 +591,8 @@ async def join_meet():
     except:
         print("No microphone to disable")
 
-
     sleep(2)
     driver.save_screenshot("screenshots/disable_microphone.png")
-
 
     print("Disable camera")
     if not missing_mic:
@@ -648,7 +656,6 @@ async def join_meet():
         print(f"Error setting name: {e}")
         driver.save_screenshot("screenshots/name_error.png")
 
-
     try:
         print("Looking for any join button...")
         wait = WebDriverWait(driver, 10)
@@ -660,34 +667,28 @@ async def join_meet():
             "//span[contains(text(), 'Join')]",
             "//span[contains(text(), 'Continue')]",
             "//span[contains(text(), 'Request to join')]",
-
             "//button[contains(text(), 'Ask to join')]",
             "//button[contains(text(), 'Join now')]",
             "//button[contains(text(), 'Request to join')]",
             "//button[contains(text(), 'Join')]",
             "//button[contains(text(), 'Continue')]",
-
             "//button[contains(@aria-label, 'Join now')]",
             "//button[contains(@aria-label, 'Ask to join')]",
             "//button[contains(@aria-label, 'Join')]",
             "//button[contains(@aria-label, 'Continue')]",
-
             "//button[contains(@data-tooltip, 'Ask to join')]",
             "//button[contains(@data-tooltip, 'Join now')]",
             "//button[contains(@data-tooltip, 'Join')]",
             "//button[contains(@data-tooltip, 'Continue')]",
-
             "//div[contains(text(), 'Ask to join')]",
             "//div[contains(text(), 'Request to join')]",
             "//div[contains(text(), 'Join now')]",
             "//div[contains(text(), 'Join')]",
             "//div[contains(text(), 'Continue')]",
-            
             "//div[contains(@aria-label, 'Ask to join')]",
             "//div[contains(@aria-label, 'Join now')]",
             "//div[contains(@aria-label, 'Join')]",
             "//div[contains(@aria-label, 'Continue')]",
-            
             "//div[contains(@data-tooltip, 'Ask to join')]",
             "//div[contains(@data-tooltip, 'Join now')]",
             "//div[contains(@data-tooltip, 'Join')]",
@@ -764,35 +765,27 @@ async def join_meet():
         print(f"Error going fullscreen: {e}")
         driver.save_screenshot("screenshots/fullscreen_error.png")
 
-
     duration_minutes = int(os.getenv("DURATION_IN_MINUTES", "15"))
     duration_seconds = duration_minutes * 60
 
-
     audio_streamer = RealtimeAudioStreamer(backend_url)
-
 
     print("\nStarting recording and streaming...")
     print(f"Duration: {duration_minutes} minutes")
     
     streaming_thread = audio_streamer.start_realtime_streaming(duration_minutes)
 
-
     print(f"Recording for {duration_minutes} minutes...")
     await asyncio.sleep(duration_seconds)
-
 
     print("\nRecording completed!")
     
     streaming_thread.join(timeout=10)
 
-
     print("\nAll recordings completed!")
-
 
     driver.quit()
     print("Done!")
-
 
 
 async def start_bot_from_frontend(meet_link=None, duration_minutes=15):
