@@ -60,11 +60,9 @@ def start_bot():
                 'error': 'Meeting link is required'
             }), 400
 
-        # Update environment variables
         os.environ['GMEET_LINK'] = meet_link
         os.environ['DURATION_IN_MINUTES'] = str(duration)
 
-        # Start bot in background thread
         bot_state['status'] = 'starting'
         bot_state['current_meeting'] = meet_link
         bot_state['start_time'] = datetime.datetime.now()
@@ -98,6 +96,7 @@ def start_bot():
             'error': str(e)
         }), 500
 
+
 @app.route('/stop', methods=['POST'])
 def stop_bot():
     try:
@@ -108,9 +107,7 @@ def stop_bot():
             })
 
         bot_state['status'] = 'stopping'
-        # The bot will finish its current session naturally
-        # Or you could implement a more forceful shutdown
-
+        
         return jsonify({
             'success': True,
             'message': 'Bot stop signal sent'
