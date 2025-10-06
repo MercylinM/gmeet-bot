@@ -892,7 +892,7 @@ def run_flask_server():
 @click.command()
 @click.option('--meet-link', help='Google Meet link')
 @click.option('--duration', default=15, help='Duration in minutes')
-@click.option('--frontend', is_flag=True, help='Start from frontend API')
+@click.option('--server', is_flag=True, help='Run as HTTP server (default for Render)')
 def main(meet_link, duration, server):
     if server or os.getenv('RUN_AS_SERVER', 'true').lower() == 'true':
         run_flask_server()
