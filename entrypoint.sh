@@ -34,7 +34,7 @@ echo "Xvfb started successfully on display :99"
 # Set display for all applications
 export DISPLAY=:99
 
-# Start pulseaudio in system mode 
+# Start pulseaudio in system mode (since running as root)
 echo "Starting PulseAudio in system mode..."
 pulseaudio --system --daemonize --log-level=4 --disallow-exit --disallow-module-loading=false
 
@@ -56,9 +56,9 @@ fi
 echo "Available audio devices:"
 pactl list short sources 2>/dev/null || echo "Could not list audio sources"
 
-# Run your application
-echo "Starting Google Meet recorder..."
-python3 gmeet.py
+# Run the Flask server (bot will wait for HTTP trigger)
+echo "Starting Google Meet Bot HTTP server..."
+python3 gmeet.py --server
 
 # Capture exit code
 EXIT_CODE=$?
