@@ -980,6 +980,7 @@ def run_production_server():
 @click.option('--meet-link', help='Google Meet link')
 @click.option('--duration', default=15, help='Duration in minutes')
 @click.option('--server', is_flag=True, help='Run as HTTP server')
+@click.option('--production', is_flag=True, help='Run in production mode')
 def main(meet_link, duration, server, production):
     if server or os.getenv('RUN_AS_SERVER', 'true').lower() == 'true':
         if production or os.getenv('FLASK_ENV') == 'production':
