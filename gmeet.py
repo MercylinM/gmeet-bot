@@ -106,20 +106,31 @@ def stop_bot():
                 'message': 'Bot is not running'
             })
 
+        print("Stop signal received, setting status to stopping...")
         bot_state['status'] = 'stopping'
+        
+        import time
+        time.sleep(2)
+        
+        if bot_state['thread'] and bot_state['thread'].is_alive():
+            print("Bot thread still running after stop signal")
+        
+        bot_state['status'] = 'idle'
+        bot_state['current_meeting'] = None
         
         return jsonify({
             'success': True,
-            'message': 'Bot stop signal sent'
+            'message': 'Bot stopped successfully'
         })
 
     except Exception as e:
         print(f"Error stopping bot: {e}")
+        bot_state['status'] = 'error'
         return jsonify({
             'success': False,
             'error': str(e)
         }), 500
-
+    
 @app.route('/status', methods=['GET'])
 def get_status():
     return jsonify({
@@ -396,7 +407,7 @@ class RealtimeAudioStreamer:
             
             while (self.is_streaming and 
                    self.stream_process and 
-                   self.stream_process.poll() is None):
+                   self.stream_process.poll() is None) and bot_state['status'] != 'stopping':
                 
                 audio_data = self.stream_process.stdout.read(chunk_size)
                 if not audio_data:
