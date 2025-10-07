@@ -27,7 +27,9 @@ bot_state = {
     'status': 'idle', 
     'current_meeting': None,
     'start_time': None,
-    'thread': None
+    'thread': None,
+    'driver': None,  
+    'audio_streamer': None 
 }
 
 @app.route('/health', methods=['GET'])
@@ -106,17 +108,11 @@ def stop_bot():
                 'message': 'Bot is not running'
             })
 
-        print("Stop signal received, setting status to stopping...")
+        print("Stop signal received, cleaning up bot...")
         bot_state['status'] = 'stopping'
         
-        import time
-        time.sleep(2)
-        
-        if bot_state['thread'] and bot_state['thread'].is_alive():
-            print("Bot thread still running after stop signal")
-        
-        bot_state['status'] = 'idle'
-        bot_state['current_meeting'] = None
+        # Trigger cleanup
+        cleanup_bot()
         
         return jsonify({
             'success': True,
@@ -130,6 +126,33 @@ def stop_bot():
             'success': False,
             'error': str(e)
         }), 500
+    
+def cleanup_bot():
+    """Cleanup bot resources - stop audio, quit driver"""
+    print("Cleaning up bot resources...")
+    
+    if bot_state['audio_streamer']:
+        try:
+            bot_state['audio_streamer'].is_streaming = False
+            if bot_state['audio_streamer'].stream_process:
+                bot_state['audio_streamer'].stream_process.terminate()
+            print("Audio streamer stopped")
+        except Exception as e:
+            print(f"Error stopping audio streamer: {e}")
+    
+    if bot_state['driver']:
+        try:
+            bot_state['driver'].quit()
+            print("Chrome driver quit")
+        except Exception as e:
+            print(f"Error quitting driver: {e}")
+    
+    bot_state['status'] = 'idle'
+    bot_state['current_meeting'] = None
+    bot_state['driver'] = None
+    bot_state['audio_streamer'] = None
+    
+    print("Bot cleanup complete")
     
 @app.route('/status', methods=['GET'])
 def get_status():
@@ -171,12 +194,15 @@ class RealtimeAudioStreamer:
         try:
             self.websocket = await websockets.connect(self.ws_url)
             print(f"Connected to WebSocket: {self.ws_url}")
+            self.is_connected = True
             
             self.listen_task = asyncio.create_task(self._listen_for_transcripts())
             return True
         except Exception as e:
             print(f"WebSocket connection failed: {e}")
+            self.is_connected = False
             return False
+   
     
     async def _listen_for_transcripts(self):
         """Listen for transcript messages on the same WebSocket"""
@@ -192,9 +218,11 @@ class RealtimeAudioStreamer:
                     continue
                 except websockets.exceptions.ConnectionClosed:
                     print("WebSocket connection closed")
+                    self.is_connected = False
                     break
         except Exception as e:
             print(f"Error listening for transcripts: {e}")
+            self.is_connected = False
     
     def _is_websocket_open(self):
         """Check if the WebSocket connection is open"""
@@ -282,7 +310,6 @@ class RealtimeAudioStreamer:
                 subprocess.run(["sox", "--version"], capture_output=True, check=True)
             except (subprocess.CalledProcessError, FileNotFoundError):
                 print("Error: sox is not installed or not in PATH")
-                print("Please install sox with: apt install sox")
                 return
             
             audio_format = {
@@ -434,6 +461,7 @@ class RealtimeAudioStreamer:
                             
                     except Exception as e:
                         print(f"WebSocket send error: {e}")
+                        self.is_connected = False
                         break
                 
                 elapsed = (datetime.datetime.now() - start_time).total_seconds()
@@ -460,6 +488,7 @@ class RealtimeAudioStreamer:
         """Clean up WebSocket connection and processes"""
         print("Cleaning up audio streamer...")
         self.is_streaming = False
+        self.is_connected = False
         
         if self.listen_task:
             self.listen_task.cancel()
@@ -872,14 +901,24 @@ async def join_meet():
     duration_seconds = duration_minutes * 60
 
     audio_streamer = RealtimeAudioStreamer(backend_url)
+    bot_state['audio_streamer'] = audio_streamer
 
     print("\nStarting recording and streaming...")
     print(f"Duration: {duration_minutes} minutes")
     
     streaming_thread = audio_streamer.start_realtime_streaming(duration_minutes)
-
     print(f"Recording for {duration_minutes} minutes...")
-    await asyncio.sleep(duration_seconds)
+
+    elapsed = 0
+    while elapsed < duration_seconds and bot_state['status'] != 'stopping':
+        await asyncio.sleep(1)
+        elapsed += 1
+        
+        if elapsed == 30 and audio_streamer.bytes_transmitted == 0:
+            print("⚠️ WARNING: No audio data transmitted after 30 seconds!")
+
+    
+    # await asyncio.sleep(duration_seconds)
 
     print("\nRecording completed!")
     
@@ -888,6 +927,9 @@ async def join_meet():
     print("\nAll recordings completed!")
 
     driver.quit()
+    bot_state['status'] = 'idle'
+    bot_state['driver'] = None
+    bot_state['audio_streamer'] = None
     print("Done!")
 
 def run_flask_server():
@@ -900,7 +942,7 @@ def run_flask_server():
 @click.command()
 @click.option('--meet-link', help='Google Meet link')
 @click.option('--duration', default=15, help='Duration in minutes')
-@click.option('--server', is_flag=True, help='Run as HTTP server (default for Render)')
+@click.option('--server', is_flag=True, help='Run as HTTP server')
 def main(meet_link, duration, server):
     if server or os.getenv('RUN_AS_SERVER', 'true').lower() == 'true':
         run_flask_server()
