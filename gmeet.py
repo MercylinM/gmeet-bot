@@ -54,7 +54,7 @@ def start_bot():
 
         data = request.json
         meet_link = data.get('meet_link') or data.get('meetLink')
-        duration = data.get('duration', 60)
+        duration = data.get('duration', 60)  # Default to 60 minutes
 
         if not meet_link:
             return jsonify({
@@ -187,25 +187,64 @@ class RealtimeAudioStreamer:
         self.bytes_transmitted = 0
         self.last_activity_time = datetime.datetime.now()
         self.is_connected = False
-
+        self.reconnect_attempts = 0
+        self.max_reconnect_attempts = 10
+        self.reconnect_delay = 5  # seconds
+        self.connection_id = None  # Unique ID for this connection
+        self._recv_lock = asyncio.Lock()  # Lock to prevent concurrent recv calls
         
     async def connect_websocket(self):
-        """Connect to backend WebSocket for real-time audio streaming"""
+        """Connect to backend WebSocket for real-time audio streaming with improved reconnection logic"""
         try:
-            headers = {}
-            if not self.ws_url.startswith('ws://localhost') and not self.ws_url.startswith('ws://127.0.0.1'):
-                headers['Origin'] = 'https://gmeet-bot.onrender.com'
+            # Generate a unique connection ID for tracking
+            self.connection_id = f"bot-{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
             
-            self.websocket = await websockets.connect(
-                self.ws_url,
-                extra_headers=headers,
-                ping_interval=20,
-                ping_timeout=10
-            )
+            print(f"Attempting to connect to WebSocket: {self.ws_url}")
+            print(f"Connection ID: {self.connection_id}")
+            
+            # Try different connection methods based on websockets library version
+            try:
+                # Try with extra_headers (newer versions)
+                headers = {}
+                if not self.ws_url.startswith('ws://localhost') and not self.ws_url.startswith('ws://127.0.0.1'):
+                    headers['Origin'] = 'https://gmeet-bot.onrender.com'
+                headers['X-Connection-ID'] = self.connection_id
+                
+                self.websocket = await websockets.connect(
+                    self.ws_url,
+                    extra_headers=headers,
+                    ping_interval=20,      # Send ping every 20 seconds
+                    ping_timeout=15,       # Wait 15 seconds for pong response
+                    close_timeout=10,      # Wait 10 seconds for close handshake
+                    max_size=10 * 1024 * 1024,  # 10MB max message size
+                    max_queue=100          # Allow up to 100 messages in queue
+                )
+            except TypeError:
+                # Fallback for older versions without extra_headers support
+                print("Using fallback connection method for older websockets library")
+                self.websocket = await websockets.connect(
+                    self.ws_url,
+                    ping_interval=20,
+                    ping_timeout=15,
+                    close_timeout=10,
+                    max_size=10 * 1024 * 1024,
+                    max_queue=100
+                )
+                
+                # Send connection ID as first message
+                await self.websocket.send(json.dumps({
+                    'type': 'connection_id',
+                    'id': self.connection_id
+                }))
+            
             print(f"Connected to WebSocket: {self.ws_url}")
             self.is_connected = True
+            self.reconnect_attempts = 0  # Reset reconnect attempts on successful connection
             
-            self.listen_task = asyncio.create_task(self._listen_for_transcripts())
+            # Start listening task only if not already running
+            if not self.listen_task or self.listen_task.done():
+                self.listen_task = asyncio.create_task(self._listen_for_transcripts())
+            
             return True
         except Exception as e:
             print(f"WebSocket connection failed: {e}")
@@ -213,20 +252,29 @@ class RealtimeAudioStreamer:
             return False
         
     async def _listen_for_transcripts(self):
-        """Listen for transcript messages on the same WebSocket"""
+        """Listen for transcript messages on the same WebSocket with improved error handling"""
         try:
             while self.websocket and self._is_websocket_open():
                 try:
-                    message = await asyncio.wait_for(
-                        self.websocket.recv(),
-                        timeout=1.0
-                    )
+                    async with self._recv_lock:  # Use lock to prevent concurrent recv calls
+                        message = await asyncio.wait_for(
+                            self.websocket.recv(),
+                            timeout=1.0
+                        )
                     self.handle_transcript_message(message)
                 except asyncio.TimeoutError:
                     continue
-                except websockets.exceptions.ConnectionClosed:
-                    print("WebSocket connection closed")
+                except websockets.exceptions.ConnectionClosed as e:
+                    print(f"WebSocket connection closed: {e.code} - {e.reason}")
                     self.is_connected = False
+                    
+                    # Attempt to reconnect if not a normal closure
+                    if e.code != 1000 and self.reconnect_attempts < self.max_reconnect_attempts:
+                        print(f"Attempting to reconnect (attempt {self.reconnect_attempts + 1}/{self.max_reconnect_attempts})")
+                        await asyncio.sleep(self.reconnect_delay)
+                        self.reconnect_attempts += 1
+                        if await self.connect_websocket():
+                            continue  # Successfully reconnected, continue listening
                     break
         except Exception as e:
             print(f"Error listening for transcripts: {e}")
@@ -288,8 +336,8 @@ class RealtimeAudioStreamer:
         except Exception as e:
             print(f"Error handling transcript: {e}")
     
-    def start_realtime_streaming(self, duration_minutes=15):
-        """Start real-time audio streaming to backend"""
+    def start_realtime_streaming(self, duration_minutes=60):
+        """Start real-time audio streaming to backend with improved stability"""
         self.is_streaming = True
         duration_seconds = duration_minutes * 60
         
@@ -303,13 +351,13 @@ class RealtimeAudioStreamer:
         return streaming_thread
         
     def _stream_audio_realtime(self, duration_seconds):
-        """Stream audio to backend WebSocket in real-time"""
+        """Stream audio to backend WebSocket in real-time with improved error handling"""
         asyncio.new_event_loop().run_until_complete(
             self._stream_audio_async(duration_seconds)
         )
     
     async def _stream_audio_async(self, duration_seconds):
-        """Async method to handle WebSocket streaming"""
+        """Async method to handle WebSocket streaming with improved stability"""
         if not await self.connect_websocket():
             return
             
@@ -328,92 +376,173 @@ class RealtimeAudioStreamer:
                 'encoding': 'signed-integer'
             }
             
+            # Check for available audio devices
+            print("Checking available audio devices...")
+            try:
+                # List available devices
+                if os.name == 'nt':  # Windows
+                    result = subprocess.run(
+                        ["sox", "-d", "-n", "stat", "-"], 
+                        capture_output=True, 
+                        text=True, 
+                        timeout=5
+                    )
+                else:  # Linux/Mac
+                    result = subprocess.run(
+                        ["arecord", "-l"], 
+                        capture_output=True, 
+                        text=True, 
+                        timeout=5
+                    )
+                    print(f"Available audio devices:\n{result.stdout}")
+            except Exception as e:
+                print(f"Error listing audio devices: {e}")
+            
             audio_device = os.getenv("AUDIO_DEVICE", "default")
             
-            if audio_device.startswith("pulseaudio:"):
-                device_name = audio_device.replace("pulseaudio:", "")
-                parec_command = [
-                    "parec",
-                    f"--format={audio_format['format']}",
-                    f"--rate={audio_format['rate']}",
-                    f"--channels={audio_format['channels']}",
-                    "--monitor-stream=false",
-                    device_name
-                ]
+            # FIXED: Use explicit format conversion for Linux/Mac
+            if os.name != 'nt':  # Linux/Mac
+                # Try different audio capture methods with proper format conversion
                 
-                sox_command = [
-                    "sox",
-                    "-q",
-                    "-t", "raw",
-                    "-r", str(audio_format['rate']),
-                    "-c", str(audio_format['channels']),
-                    "-b", str(audio_format['bits']),
-                    "-e", audio_format['encoding'],
-                    "-",
-                    "-t", "raw", "-"
-                ]
-                
-                print(f"Starting PulseAudio capture for device: {device_name}")
-                print(f"Parec command: {' '.join(parec_command)}")
-                print(f"Sox command: {' '.join(sox_command)}")
-                
-                parec_process = subprocess.Popen(
-                    parec_command,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE
-                )
-                
-                sox_process = subprocess.Popen(
-                    sox_command,
-                    stdin=parec_process.stdout,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE
-                )
-                
-                self.stream_process = sox_process
-                
-            elif audio_device and "monitor" in audio_device:
-                parec_command = [
-                    "parec",
-                    f"--format={audio_format['format']}",
-                    f"--rate={audio_format['rate']}",
-                    f"--channels={audio_format['channels']}",
-                    "--monitor-stream=true",
-                    audio_device
-                ]
-                
-                sox_command = [
-                    "sox",
-                    "-q",
-                    "-t", "raw",
-                    "-r", str(audio_format['rate']),
-                    "-c", str(audio_format['channels']),
-                    "-b", str(audio_format['bits']),
-                    "-e", audio_format['encoding'],
-                    "-",
-                    "-t", "raw", "-"
-                ]
-                
-                print(f"Starting monitor capture for device: {audio_device}")
-                print(f"Parec command: {' '.join(parec_command)}")
-                print(f"Sox command: {' '.join(sox_command)}")
-                
-                parec_process = subprocess.Popen(
-                    parec_command,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE
-                )
-                
-                sox_process = subprocess.Popen(
-                    sox_command,
-                    stdin=parec_process.stdout,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE
-                )
-                
-                self.stream_process = sox_process
-                
-            else:
+                # Method 1: Try using parec directly (most reliable for PulseAudio)
+                try:
+                    print("Trying direct parec capture...")
+                    parec_command = [
+                        "parec",
+                        "--format=s16le",
+                        "--rate=16000",
+                        "--channels=1",
+                        "--monitor-stream=false"
+                    ]
+                    
+                    print(f"Parec command: {' '.join(parec_command)}")
+                    
+                    self.stream_process = subprocess.Popen(
+                        parec_command,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        bufsize=0
+                    )
+                    
+                    # Check if it started successfully
+                    await asyncio.sleep(1)
+                    if self.stream_process.poll() is None:
+                        print("Successfully started direct parec capture")
+                    else:
+                        stdout, stderr = self.stream_process.communicate()
+                        print(f"Direct parec failed: {stderr.decode('utf-8', errors='replace')}")
+                        raise Exception("Direct parec failed")
+                        
+                except Exception as e1:
+                    print(f"Direct parec failed: {e1}")
+                    
+                    # Method 2: Try two-step process with sox
+                    try:
+                        print("Trying two-step sox process...")
+                        
+                        # Step 1: Capture at native format
+                        capture_command = [
+                            "sox",
+                            "-q",
+                            "-t", "pulseaudio",
+                            "-d",
+                            "-t", "raw",
+                            "-"
+                        ]
+                        
+                        # Step 2: Convert to desired format
+                        convert_command = [
+                            "sox",
+                            "-q",
+                            "-t", "raw",
+                            "-r", "48000",  # Input sample rate (what your system provides)
+                            "-c", "2",      # Input channels (what your system provides)
+                            "-b", "16",
+                            "-e", "signed-integer",
+                            "-",
+                            "-t", "raw",
+                            "-r", "16000",  # Output sample rate (what you want)
+                            "-c", "1",      # Output channels (what you want)
+                            "-b", "16",
+                            "-e", "signed-integer",
+                            "-"
+                        ]
+                        
+                        print(f"Capture command: {' '.join(capture_command)}")
+                        print(f"Convert command: {' '.join(convert_command)}")
+                        
+                        capture_process = subprocess.Popen(
+                            capture_command,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            bufsize=0
+                        )
+                        
+                        self.stream_process = subprocess.Popen(
+                            convert_command,
+                            stdin=capture_process.stdout,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            bufsize=0
+                        )
+                        
+                        # Check if it started successfully
+                        await asyncio.sleep(1)
+                        if self.stream_process.poll() is None:
+                            print("Successfully started two-step sox process")
+                        else:
+                            stdout, stderr = self.stream_process.communicate()
+                            print(f"Two-step sox failed: {stderr.decode('utf-8', errors='replace')}")
+                            raise Exception("Two-step sox failed")
+                            
+                    except Exception as e2:
+                        print(f"Two-step sox failed: {e2}")
+                        
+                        # Method 3: Try explicit sox format conversion
+                        try:
+                            print("Trying explicit sox format conversion...")
+                            sox_command = [
+                                "sox",
+                                "-q",
+                                "-t", "pulseaudio",
+                                "-d",
+                                "-t", "raw",
+                                "-r", "48000",  # Input sample rate
+                                "-c", "2",      # Input channels
+                                "-b", "16",
+                                "-e", "signed-integer",
+                                "-",
+                                "-t", "raw",
+                                "-r", "16000",  # Output sample rate
+                                "-c", "1",      # Output channels
+                                "-b", "16",
+                                "-e", "signed-integer",
+                                "-"
+                            ]
+                            
+                            print(f"Sox command: {' '.join(sox_command)}")
+                            
+                            self.stream_process = subprocess.Popen(
+                                sox_command,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                bufsize=0
+                            )
+                            
+                            # Check if it started successfully
+                            await asyncio.sleep(1)
+                            if self.stream_process.poll() is None:
+                                print("Successfully started explicit sox conversion")
+                            else:
+                                stdout, stderr = self.stream_process.communicate()
+                                print(f"Explicit sox failed: {stderr.decode('utf-8', errors='replace')}")
+                                raise Exception("Explicit sox failed")
+                                
+                        except Exception as e3:
+                            print(f"All audio capture methods failed. Last error: {e3}")
+                            return
+            else:  # Windows
+                # For Windows, try direct device capture
                 sox_command = [
                     "sox",
                     "-q",
@@ -425,32 +554,96 @@ class RealtimeAudioStreamer:
                     "-t", "raw", "-"
                 ]
                 
-                print(f"Starting default capture for device: {audio_device}")
+                print(f"Starting Windows audio capture for device: {audio_device}")
                 print(f"Sox command: {' '.join(sox_command)}")
                 
                 self.stream_process = subprocess.Popen(
                     sox_command,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE
+                    stderr=subprocess.PIPE,
+                    bufsize=0  # Unbuffered output
                 )
             
             print(f"Starting real-time audio streaming for {duration_seconds} seconds...")
             
             start_time = datetime.datetime.now()
             chunk_size = 4096
+            last_ping_time = start_time
+            last_status_time = start_time
+            reconnect_attempts = 0
+            max_reconnect_attempts = 10
+            reconnect_delay = 5  
             silence_timer = None
+            inactivity_check_interval = 30  
+            last_inactivity_check = start_time
+            no_data_count = 0
+            max_no_data_count = 10  
 
             ping_task = asyncio.create_task(self._ping_websocket())
+            
+            # Check if the process started successfully
+            await asyncio.sleep(1)
+            if self.stream_process.poll() is not None:
+                stdout, stderr = self.stream_process.communicate()
+                print(f"Audio capture process failed to start:")
+                print(f"stdout: {stdout.decode('utf-8', errors='replace')}")
+                print(f"stderr: {stderr.decode('utf-8', errors='replace')}")
+                return
             
             while (self.is_streaming and 
                    self.stream_process and 
                    self.stream_process.poll() is None) and bot_state['status'] != 'stopping':
                 
-                audio_data = self.stream_process.stdout.read(chunk_size)
-                if not audio_data:
+                # Check if we need to reconnect
+                if not self.is_connected and reconnect_attempts < max_reconnect_attempts:
+                    print(f"Attempting to reconnect (attempt {reconnect_attempts + 1}/{max_reconnect_attempts})")
+                    await asyncio.sleep(reconnect_delay)
+                    if await self.connect_websocket():
+                        reconnect_attempts = 0  # Reset on successful reconnection
+                    else:
+                        reconnect_attempts += 1
+                    continue
+                
+                # Read audio data with non-blocking approach
+                try:
+                    # Use select to check if data is available (Unix-like systems)
+                    if hasattr(os, 'select'):
+                        import select
+                        ready, _, _ = select.select([self.stream_process.stdout], [], [], 0.1)
+                        if not ready:
+                            no_data_count += 1
+                            if no_data_count > max_no_data_count:
+                                print(f"No audio data available for {no_data_count} checks, checking process status...")
+                                if self.stream_process.poll() is not None:
+                                    stdout, stderr = self.stream_process.communicate()
+                                    print(f"Audio capture process terminated:")
+                                    print(f"stdout: {stdout.decode('utf-8', errors='replace')}")
+                                    print(f"stderr: {stderr.decode('utf-8', errors='replace')}")
+                                    break
+                            await asyncio.sleep(0.01)
+                            continue
+                    
+                    audio_data = self.stream_process.stdout.read(chunk_size)
+                    if not audio_data:
+                        no_data_count += 1
+                        if no_data_count > max_no_data_count:
+                            print(f"No audio data available for {no_data_count} reads, checking process status...")
+                            if self.stream_process.poll() is not None:
+                                stdout, stderr = self.stream_process.communicate()
+                                print(f"Audio capture process terminated:")
+                                print(f"stdout: {stdout.decode('utf-8', errors='replace')}")
+                                print(f"stderr: {stderr.decode('utf-8', errors='replace')}")
+                                break
+                        await asyncio.sleep(0.01)
+                        continue
+                    
+                    no_data_count = 0  # Reset counter when we get data
+                except Exception as e:
+                    print(f"Error reading audio data: {e}")
                     await asyncio.sleep(0.01)
                     continue
                 
+                # Send audio data if connected
                 if self.websocket and self._is_websocket_open():
                     try:
                         await self.websocket.send(audio_data)
@@ -464,17 +657,36 @@ class RealtimeAudioStreamer:
                             self._check_silence(300)
                         )
                         
-                        elapsed = (datetime.datetime.now() - start_time).total_seconds()
-                        if int(elapsed) % 5 == 0 and elapsed > 0:
+                        # Print status every 30 seconds
+                        current_time = datetime.datetime.now()
+                        elapsed = (current_time - start_time).total_seconds()
+                        if int(elapsed) % 30 == 0 and (current_time - last_status_time).total_seconds() >= 30:
                             kb_transmitted = self.bytes_transmitted / 1024
                             print(f"📊 Streaming: {kb_transmitted:.2f} KB sent in {int(elapsed)}s")
+                            last_status_time = current_time
                             
                     except Exception as e:
                         print(f"WebSocket send error: {e}")
                         self.is_connected = False
-                        break
+                        reconnect_attempts += 1
+                        continue
                 
-                elapsed = (datetime.datetime.now() - start_time).total_seconds()
+                # Check for inactivity
+                current_time = datetime.datetime.now()
+                if (current_time - last_inactivity_check).total_seconds() >= inactivity_check_interval:
+                    time_since_last_activity = (current_time - self.last_activity_time).total_seconds()
+                    if time_since_last_activity >= inactivity_check_interval:
+                        print(f"No audio activity for {time_since_last_activity:.1f} seconds, checking connection...")
+                        if not self.is_connected:
+                            print("Attempting to reconnect due to inactivity...")
+                            if await self.connect_websocket():
+                                reconnect_attempts = 0
+                            else:
+                                reconnect_attempts += 1
+                    last_inactivity_check = current_time
+                
+                # Check if we've reached the duration limit
+                elapsed = (current_time - start_time).total_seconds()
                 if elapsed >= duration_seconds:
                     print(f"Reached duration limit: {duration_seconds}s")
                     break
@@ -509,6 +721,9 @@ class RealtimeAudioStreamer:
             time_since_last_activity = (datetime.datetime.now() - self.last_activity_time).total_seconds()
             if time_since_last_activity >= max_silence_seconds:
                 print("No audio data for extended period, checking connection...")
+                if not self.is_connected:
+                    print("Attempting to reconnect due to silence...")
+                    await self.connect_websocket()
         except asyncio.CancelledError:
             pass
     
@@ -971,8 +1186,16 @@ async def join_meet():
         cleanup_bot()
         return
     
+    # Attempt to go fullscreen
+    try:
+        print("Attempting to go fullscreen...")
+        driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.F11)
+        sleep(2)
+        print("Pressed F11 to go fullscreen")
+    except Exception as e:
+        print(f"Error going fullscreen: {e}")
 
-    duration_minutes = int(os.getenv("DURATION_IN_MINUTES", "15"))
+    duration_minutes = int(os.getenv("DURATION_IN_MINUTES", "60"))  # Default to 60 minutes
     duration_seconds = duration_minutes * 60
 
     audio_streamer = RealtimeAudioStreamer(backend_url)
@@ -985,16 +1208,25 @@ async def join_meet():
     print(f"Recording for {duration_minutes} minutes...")
 
     elapsed = 0
+    last_status_check = 0
+    status_check_interval = 60  # Check status every minute
+    
     while elapsed < duration_seconds and bot_state['status'] != 'stopping':
         await asyncio.sleep(1)
         elapsed += 1
         
-        if elapsed == 30 and audio_streamer.bytes_transmitted == 0:
-            print("WARNING: No audio data transmitted after 30 seconds!")
-
+        # Check for issues periodically
+        if elapsed - last_status_check >= status_check_interval:
+            if elapsed == 30 and audio_streamer.bytes_transmitted == 0:
+                print("WARNING: No audio data transmitted after 30 seconds!")
+            
+            if not audio_streamer.is_connected:
+                print(f"WARNING: WebSocket disconnected at {elapsed} seconds")
+                
+            print(f"Status check at {elapsed}s: Connected={audio_streamer.is_connected}, "
+                  f"Bytes sent={audio_streamer.bytes_transmitted/1024:.2f}KB")
+            last_status_check = elapsed
     
-    # await asyncio.sleep(duration_seconds)
-
     print("\nRecording completed!")
     
     streaming_thread.join(timeout=10)
@@ -1058,7 +1290,7 @@ def run_production_server():
 
 @click.command()
 @click.option('--meet-link', help='Google Meet link')
-@click.option('--duration', default=15, help='Duration in minutes')
+@click.option('--duration', default=60, help='Duration in minutes')
 @click.option('--server', is_flag=True, help='Run as HTTP server')
 @click.option('--production', is_flag=True, help='Run in production mode')
 def main(meet_link, duration, server, production):
