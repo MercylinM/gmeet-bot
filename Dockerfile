@@ -73,7 +73,7 @@ WORKDIR /app
 
 # Copy requirements first for better caching
 COPY requirements.txt /app/
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt gunicorn
 
 # Copy application files
 COPY . /app

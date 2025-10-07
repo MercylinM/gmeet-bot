@@ -111,7 +111,6 @@ def stop_bot():
         print("Stop signal received, cleaning up bot...")
         bot_state['status'] = 'stopping'
         
-        # Trigger cleanup
         cleanup_bot()
         
         return jsonify({
@@ -915,7 +914,7 @@ async def join_meet():
         elapsed += 1
         
         if elapsed == 30 and audio_streamer.bytes_transmitted == 0:
-            print("⚠️ WARNING: No audio data transmitted after 30 seconds!")
+            print("WARNING: No audio data transmitted after 30 seconds!")
 
     
     # await asyncio.sleep(duration_seconds)
@@ -938,20 +937,60 @@ def run_flask_server():
     print(f"Starting Flask server on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
+def run_production_server():
+    """Run production server with better configuration"""
+    port = int(os.getenv('PORT', 10000))
+    workers = int(os.getenv('WORKERS', 2))
+    
+    # Check if gunicorn is available
+    try:
+        import gunicorn.app.base
+        
+        class GunicornApp(gunicorn.app.base.BaseApplication):
+            def __init__(self, app, options=None):
+                self.options = options or {}
+                self.application = app
+                super().__init__()
+
+            def load_config(self):
+                for key, value in self.options.items():
+                    self.cfg.set(key.lower(), value)
+
+            def load(self):
+                return self.application
+        
+        options = {
+            'bind': f'0.0.0.0:{port}',
+            'workers': workers,
+            'timeout': 120,
+            'preload': True,
+            'accesslog': '-',
+            'errorlog': '-'
+        }
+        
+        print(f"Starting production server on port {port} with {workers} workers")
+        GunicornApp(app, options).run()
+        
+    except ImportError:
+        print("Gunicorn not available, falling back to Flask development server")
+        print("WARNING: This is not suitable for production!")
+        app.run(host='0.0.0.0', port=port, debug=False)
 
 @click.command()
 @click.option('--meet-link', help='Google Meet link')
 @click.option('--duration', default=15, help='Duration in minutes')
 @click.option('--server', is_flag=True, help='Run as HTTP server')
-def main(meet_link, duration, server):
+def main(meet_link, duration, server, production):
     if server or os.getenv('RUN_AS_SERVER', 'true').lower() == 'true':
-        run_flask_server()
+        if production or os.getenv('FLASK_ENV') == 'production':
+            run_production_server()
+        else:
+            run_flask_server()
     else:
         if meet_link:
             os.environ["GMEET_LINK"] = meet_link
         os.environ["DURATION_IN_MINUTES"] = str(duration)
         asyncio.run(join_meet())
-
 
 if __name__ == "__main__":
     main()
