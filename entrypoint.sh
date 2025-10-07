@@ -12,7 +12,7 @@ if ! pgrep -x "dbus-daemon" > /dev/null; then
     echo "Starting D-Bus..."
     rm -f /run/dbus/pid 2>/dev/null
     dbus-daemon --system --fork
-    slaeep 1
+    sleep 1
 fi
 
 # Start Xvfb on display 99
