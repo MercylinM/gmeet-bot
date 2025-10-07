@@ -58,7 +58,7 @@ pactl list short sources 2>/dev/null || echo "Could not list audio sources"
 
 # Run the Flask server (bot will wait for HTTP trigger)
 echo "Starting Google Meet Bot HTTP server..."
-python3 gmeet.py --server
+python3 gmeet.py --server --production
 
 # Capture exit code
 EXIT_CODE=$?
