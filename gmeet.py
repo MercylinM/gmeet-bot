@@ -963,7 +963,7 @@ def run_production_server():
             'bind': f'0.0.0.0:{port}',
             'workers': workers,
             'timeout': 120,
-            'preload': True,
+            # 'preload': True,
             'accesslog': '-',
             'errorlog': '-'
         }
