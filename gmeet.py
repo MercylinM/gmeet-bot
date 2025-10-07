@@ -490,7 +490,7 @@ class RealtimeAudioStreamer:
         """Send periodic pings to keep the WebSocket connection alive"""
         try:
             while self.is_connected and self.websocket:
-                await asyncio.sleep(30)  # Ping every 30 seconds
+                await asyncio.sleep(30)  
                 if self.websocket and self._is_websocket_open():
                     try:
                         await self.websocket.ping()
