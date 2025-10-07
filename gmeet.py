@@ -192,7 +192,16 @@ class RealtimeAudioStreamer:
     async def connect_websocket(self):
         """Connect to backend WebSocket for real-time audio streaming"""
         try:
-            self.websocket = await websockets.connect(self.ws_url)
+            headers = {}
+            if not self.ws_url.startswith('ws://localhost') and not self.ws_url.startswith('ws://127.0.0.1'):
+                headers['Origin'] = 'https://gmeet-bot.onrender.com'
+            
+            self.websocket = await websockets.connect(
+                self.ws_url,
+                extra_headers=headers,
+                ping_interval=20,
+                ping_timeout=10
+            )
             print(f"Connected to WebSocket: {self.ws_url}")
             self.is_connected = True
             
@@ -202,8 +211,7 @@ class RealtimeAudioStreamer:
             print(f"WebSocket connection failed: {e}")
             self.is_connected = False
             return False
-   
-    
+        
     async def _listen_for_transcripts(self):
         """Listen for transcript messages on the same WebSocket"""
         try:
@@ -431,6 +439,8 @@ class RealtimeAudioStreamer:
             start_time = datetime.datetime.now()
             chunk_size = 4096
             silence_timer = None
+
+            ping_task = asyncio.create_task(self._ping_websocket())
             
             while (self.is_streaming and 
                    self.stream_process and 
@@ -468,11 +478,29 @@ class RealtimeAudioStreamer:
                 if elapsed >= duration_seconds:
                     print(f"Reached duration limit: {duration_seconds}s")
                     break
-                    
+                
+            ping_task.cancel()
+                             
         except Exception as e:
             print(f"Real-time streaming error: {e}")
         finally:
             await self.cleanup()
+
+    async def _ping_websocket(self):
+        """Send periodic pings to keep the WebSocket connection alive"""
+        try:
+            while self.is_connected and self.websocket:
+                await asyncio.sleep(30)  # Ping every 30 seconds
+                if self.websocket and self._is_websocket_open():
+                    try:
+                        await self.websocket.ping()
+                        print("WebSocket ping sent")
+                    except Exception as e:
+                        print(f"WebSocket ping failed: {e}")
+                        self.is_connected = False
+                        break
+        except asyncio.CancelledError:
+            pass
     
     async def _check_silence(self, max_silence_seconds):
         """Check for silence and emit an event if detected"""
@@ -713,7 +741,7 @@ async def join_meet():
         print(f"Warning: Could not grant permissions: {e}")
 
     if bot_state['status'] == 'stopping':
-        print("⛔ Stop signal received, cleaning up")
+        print("Stop signal received, cleaning up")
         cleanup_bot()
         return
 
@@ -997,7 +1025,6 @@ def run_production_server():
     port = int(os.getenv('PORT', 10000))
     workers = int(os.getenv('WORKERS', 2))
     
-    # Check if gunicorn is available
     try:
         import gunicorn.app.base
         
@@ -1018,7 +1045,6 @@ def run_production_server():
             'bind': f'0.0.0.0:{port}',
             'workers': workers,
             'timeout': 120,
-            # 'preload': True,
             'accesslog': '-',
             'errorlog': '-'
         }
@@ -1028,7 +1054,6 @@ def run_production_server():
         
     except ImportError:
         print("Gunicorn not available, falling back to Flask development server")
-        print("WARNING: This is not suitable for production!")
         app.run(host='0.0.0.0', port=port, debug=False)
 
 @click.command()
