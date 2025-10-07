@@ -176,341 +176,6 @@ def index():
     })
 
 
-# class RealtimeAudioStreamer:
-#     def __init__(self, backend_url):
-#         self.backend_url = backend_url
-#         self.ws_url = backend_url.replace('http', 'ws') + '/ws/audio'
-#         self.websocket = None
-#         self.is_streaming = False
-#         self.stream_process = None
-#         self.listen_task = None
-#         self.bytes_transmitted = 0
-#         self.last_activity_time = datetime.datetime.now()
-        
-#     async def connect_websocket(self):
-#         """Connect to backend WebSocket for real-time audio streaming"""
-#         try:
-#             self.websocket = await websockets.connect(self.ws_url)
-#             print(f"Connected to WebSocket: {self.ws_url}")
-#             self.is_connected = True
-            
-#             self.listen_task = asyncio.create_task(self._listen_for_transcripts())
-#             return True
-#         except Exception as e:
-#             print(f"WebSocket connection failed: {e}")
-#             self.is_connected = False
-#             return False
-   
-    
-#     async def _listen_for_transcripts(self):
-#         """Listen for transcript messages on the same WebSocket"""
-#         try:
-#             while self.websocket and self._is_websocket_open():
-#                 try:
-#                     message = await asyncio.wait_for(
-#                         self.websocket.recv(),
-#                         timeout=1.0
-#                     )
-#                     self.handle_transcript_message(message)
-#                 except asyncio.TimeoutError:
-#                     continue
-#                 except websockets.exceptions.ConnectionClosed:
-#                     print("WebSocket connection closed")
-#                     self.is_connected = False
-#                     break
-#         except Exception as e:
-#             print(f"Error listening for transcripts: {e}")
-#             self.is_connected = False
-    
-#     def _is_websocket_open(self):
-#         """Check if the WebSocket connection is open"""
-#         if not self.websocket:
-#             return False
-#         if hasattr(self.websocket, 'closed'):
-#             return not self.websocket.closed
-#         elif hasattr(self.websocket, 'state'):
-#             return self.websocket.state == 1  
-#         return False
-    
-#     def handle_transcript_message(self, message):
-#         """Handle incoming transcript messages"""
-#         try:
-#             data = json.loads(message)
-#             message_type = data.get('message_type', '')
-            
-#             if message_type == 'interim_transcript':
-#                 transcript = data.get('transcript', '').strip()
-#                 speaker = data.get('speaker_name', 'Unknown')
-#                 if transcript:
-#                     print(f"INTERIM [{speaker}]: {transcript}")
-                    
-#             elif message_type == 'final_transcript':
-#                 transcript = data.get('transcript', '').strip()
-#                 speaker = data.get('speaker_name', 'Unknown')
-#                 if transcript:
-#                     print(f"FINAL [{speaker}]: {transcript}")
-                    
-#             elif message_type == 'enriched_transcript':
-#                 transcript = data.get('transcript', '').strip()
-#                 speaker = data.get('speaker_name', 'Unknown')
-#                 analysis = data.get('analysis', {})
-                
-#                 if transcript and analysis:
-#                     summary = analysis.get('summary', '').strip()
-#                     questions = analysis.get('questions', [])
-#                     keywords = analysis.get('keywords', [])
-                    
-#                     print(f"\nENRICHED [{speaker}]: {transcript}")
-#                     if summary:
-#                         print(f"Summary: {summary}")
-#                     if keywords:
-#                         print(f"Keywords: {', '.join(keywords)}")
-#                     if questions:
-#                         for i, q in enumerate(questions, 1):
-#                             print(f"Question {i}: {q}")
-#                     print()
-                        
-#             elif message_type == 'analysis_error':
-#                 print(f"Analysis error: {data.get('error', 'Unknown error')}")
-                
-#         except json.JSONDecodeError:
-#             pass
-#         except Exception as e:
-#             print(f"Error handling transcript: {e}")
-    
-#     def start_realtime_streaming(self, duration_minutes=15):
-#         """Start real-time audio streaming to backend"""
-#         self.is_streaming = True
-#         duration_seconds = duration_minutes * 60
-        
-#         streaming_thread = threading.Thread(
-#             target=self._stream_audio_realtime,
-#             args=(duration_seconds,)
-#         )
-#         streaming_thread.daemon = True
-#         streaming_thread.start()
-        
-#         return streaming_thread
-        
-#     def _stream_audio_realtime(self, duration_seconds):
-#         """Stream audio to backend WebSocket in real-time"""
-#         asyncio.new_event_loop().run_until_complete(
-#             self._stream_audio_async(duration_seconds)
-#         )
-    
-#     async def _stream_audio_async(self, duration_seconds):
-#         """Async method to handle WebSocket streaming"""
-#         if not await self.connect_websocket():
-#             return
-            
-#         try:
-#             try:
-#                 subprocess.run(["sox", "--version"], capture_output=True, check=True)
-#             except (subprocess.CalledProcessError, FileNotFoundError):
-#                 print("Error: sox is not installed or not in PATH")
-#                 return
-            
-#             audio_format = {
-#                 'format': 's16le',
-#                 'rate': 16000,
-#                 'channels': 1,
-#                 'bits': 16,
-#                 'encoding': 'signed-integer'
-#             }
-            
-#             audio_device = os.getenv("AUDIO_DEVICE", "default")
-            
-#             if audio_device.startswith("pulseaudio:"):
-#                 device_name = audio_device.replace("pulseaudio:", "")
-#                 parec_command = [
-#                     "parec",
-#                     f"--format={audio_format['format']}",
-#                     f"--rate={audio_format['rate']}",
-#                     f"--channels={audio_format['channels']}",
-#                     "--monitor-stream=false",
-#                     device_name
-#                 ]
-                
-#                 sox_command = [
-#                     "sox",
-#                     "-q",
-#                     "-t", "raw",
-#                     "-r", str(audio_format['rate']),
-#                     "-c", str(audio_format['channels']),
-#                     "-b", str(audio_format['bits']),
-#                     "-e", audio_format['encoding'],
-#                     "-",
-#                     "-t", "raw", "-"
-#                 ]
-                
-#                 print(f"Starting PulseAudio capture for device: {device_name}")
-#                 print(f"Parec command: {' '.join(parec_command)}")
-#                 print(f"Sox command: {' '.join(sox_command)}")
-                
-#                 parec_process = subprocess.Popen(
-#                     parec_command,
-#                     stdout=subprocess.PIPE,
-#                     stderr=subprocess.PIPE
-#                 )
-                
-#                 sox_process = subprocess.Popen(
-#                     sox_command,
-#                     stdin=parec_process.stdout,
-#                     stdout=subprocess.PIPE,
-#                     stderr=subprocess.PIPE
-#                 )
-                
-#                 self.stream_process = sox_process
-                
-#             elif audio_device and "monitor" in audio_device:
-#                 parec_command = [
-#                     "parec",
-#                     f"--format={audio_format['format']}",
-#                     f"--rate={audio_format['rate']}",
-#                     f"--channels={audio_format['channels']}",
-#                     "--monitor-stream=true",
-#                     audio_device
-#                 ]
-                
-#                 sox_command = [
-#                     "sox",
-#                     "-q",
-#                     "-t", "raw",
-#                     "-r", str(audio_format['rate']),
-#                     "-c", str(audio_format['channels']),
-#                     "-b", str(audio_format['bits']),
-#                     "-e", audio_format['encoding'],
-#                     "-",
-#                     "-t", "raw", "-"
-#                 ]
-                
-#                 print(f"Starting monitor capture for device: {audio_device}")
-#                 print(f"Parec command: {' '.join(parec_command)}")
-#                 print(f"Sox command: {' '.join(sox_command)}")
-                
-#                 parec_process = subprocess.Popen(
-#                     parec_command,
-#                     stdout=subprocess.PIPE,
-#                     stderr=subprocess.PIPE
-#                 )
-                
-#                 sox_process = subprocess.Popen(
-#                     sox_command,
-#                     stdin=parec_process.stdout,
-#                     stdout=subprocess.PIPE,
-#                     stderr=subprocess.PIPE
-#                 )
-                
-#                 self.stream_process = sox_process
-                
-#             else:
-#                 sox_command = [
-#                     "sox",
-#                     "-q",
-#                     "-d" if audio_device == "default" else audio_device,
-#                     "-r", str(audio_format['rate']),
-#                     "-c", str(audio_format['channels']),
-#                     "-b", str(audio_format['bits']),
-#                     "-e", audio_format['encoding'],
-#                     "-t", "raw", "-"
-#                 ]
-                
-#                 print(f"Starting default capture for device: {audio_device}")
-#                 print(f"Sox command: {' '.join(sox_command)}")
-                
-#                 self.stream_process = subprocess.Popen(
-#                     sox_command,
-#                     stdout=subprocess.PIPE,
-#                     stderr=subprocess.PIPE
-#                 )
-            
-#             print(f"Starting real-time audio streaming for {duration_seconds} seconds...")
-            
-#             start_time = datetime.datetime.now()
-#             chunk_size = 4096
-#             silence_timer = None
-            
-#             while (self.is_streaming and 
-#                    self.stream_process and 
-#                    self.stream_process.poll() is None) and bot_state['status'] != 'stopping':
-                
-#                 audio_data = self.stream_process.stdout.read(chunk_size)
-#                 if not audio_data:
-#                     await asyncio.sleep(0.01)
-#                     continue
-                
-#                 if self.websocket and self._is_websocket_open():
-#                     try:
-#                         await self.websocket.send(audio_data)
-#                         self.bytes_transmitted += len(audio_data)
-#                         self.last_activity_time = datetime.datetime.now()
-                        
-#                         if silence_timer:
-#                             silence_timer.cancel()
-                        
-#                         silence_timer = asyncio.create_task(
-#                             self._check_silence(300)
-#                         )
-                        
-#                         elapsed = (datetime.datetime.now() - start_time).total_seconds()
-#                         if int(elapsed) % 5 == 0 and elapsed > 0:
-#                             kb_transmitted = self.bytes_transmitted / 1024
-#                             print(f"📊 Streaming: {kb_transmitted:.2f} KB sent in {int(elapsed)}s")
-                            
-#                     except Exception as e:
-#                         print(f"WebSocket send error: {e}")
-#                         self.is_connected = False
-#                         break
-                
-#                 elapsed = (datetime.datetime.now() - start_time).total_seconds()
-#                 if elapsed >= duration_seconds:
-#                     print(f"Reached duration limit: {duration_seconds}s")
-#                     break
-                    
-#         except Exception as e:
-#             print(f"Real-time streaming error: {e}")
-#         finally:
-#             await self.cleanup()
-    
-#     async def _check_silence(self, max_silence_seconds):
-#         """Check for silence and emit an event if detected"""
-#         try:
-#             await asyncio.sleep(max_silence_seconds)
-#             time_since_last_activity = (datetime.datetime.now() - self.last_activity_time).total_seconds()
-#             if time_since_last_activity >= max_silence_seconds:
-#                 print("No audio data for extended period, checking connection...")
-#         except asyncio.CancelledError:
-#             pass
-    
-#     async def cleanup(self):
-#         """Clean up WebSocket connection and processes"""
-#         print("Cleaning up audio streamer...")
-#         self.is_streaming = False
-#         self.is_connected = False
-        
-#         if self.listen_task:
-#             self.listen_task.cancel()
-#             try:
-#                 await self.listen_task
-#             except asyncio.CancelledError:
-#                 pass
-#             self.listen_task = None
-        
-#         if self.stream_process:
-#             self.stream_process.terminate()
-#             try:
-#                 self.stream_process.wait(timeout=5)
-#             except subprocess.TimeoutExpired:
-#                 self.stream_process.kill()
-#             self.stream_process = None
-            
-#         if self.websocket:
-#             await self.websocket.close()
-#             self.websocket = None
-            
-#         print("Real-time streaming stopped")
-#         print(f"Total bytes transmitted: {self.bytes_transmitted / 1024:.2f} KB")
-
 class RealtimeAudioStreamer:
     def __init__(self, backend_url):
         self.backend_url = backend_url
@@ -522,6 +187,7 @@ class RealtimeAudioStreamer:
         self.bytes_transmitted = 0
         self.last_activity_time = datetime.datetime.now()
         self.is_connected = False
+
         
     async def connect_websocket(self):
         """Connect to backend WebSocket for real-time audio streaming"""
@@ -536,6 +202,7 @@ class RealtimeAudioStreamer:
             print(f"WebSocket connection failed: {e}")
             self.is_connected = False
             return False
+   
     
     async def _listen_for_transcripts(self):
         """Listen for transcript messages on the same WebSocket"""
@@ -635,16 +302,12 @@ class RealtimeAudioStreamer:
     
     async def _stream_audio_async(self, duration_seconds):
         """Async method to handle WebSocket streaming"""
-        print("Initializing audio streaming...")
-        
         if not await self.connect_websocket():
-            print("Failed to connect to backend WebSocket")
             return
             
         try:
             try:
                 subprocess.run(["sox", "--version"], capture_output=True, check=True)
-                print("Sox is available")
             except (subprocess.CalledProcessError, FileNotFoundError):
                 print("Error: sox is not installed or not in PATH")
                 return
@@ -659,36 +322,119 @@ class RealtimeAudioStreamer:
             
             audio_device = os.getenv("AUDIO_DEVICE", "default")
             
-            sox_command = [
-                "sox",
-                "-q",
-                "-d",  
-                "-r", str(audio_format['rate']),
-                "-c", str(audio_format['channels']),
-                "-b", str(audio_format['bits']),
-                "-e", audio_format['encoding'],
-                "-t", "raw", "-"
-            ]
+            if audio_device.startswith("pulseaudio:"):
+                device_name = audio_device.replace("pulseaudio:", "")
+                parec_command = [
+                    "parec",
+                    f"--format={audio_format['format']}",
+                    f"--rate={audio_format['rate']}",
+                    f"--channels={audio_format['channels']}",
+                    "--monitor-stream=false",
+                    device_name
+                ]
+                
+                sox_command = [
+                    "sox",
+                    "-q",
+                    "-t", "raw",
+                    "-r", str(audio_format['rate']),
+                    "-c", str(audio_format['channels']),
+                    "-b", str(audio_format['bits']),
+                    "-e", audio_format['encoding'],
+                    "-",
+                    "-t", "raw", "-"
+                ]
+                
+                print(f"Starting PulseAudio capture for device: {device_name}")
+                print(f"Parec command: {' '.join(parec_command)}")
+                print(f"Sox command: {' '.join(sox_command)}")
+                
+                parec_process = subprocess.Popen(
+                    parec_command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                
+                sox_process = subprocess.Popen(
+                    sox_command,
+                    stdin=parec_process.stdout,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                
+                self.stream_process = sox_process
+                
+            elif audio_device and "monitor" in audio_device:
+                parec_command = [
+                    "parec",
+                    f"--format={audio_format['format']}",
+                    f"--rate={audio_format['rate']}",
+                    f"--channels={audio_format['channels']}",
+                    "--monitor-stream=true",
+                    audio_device
+                ]
+                
+                sox_command = [
+                    "sox",
+                    "-q",
+                    "-t", "raw",
+                    "-r", str(audio_format['rate']),
+                    "-c", str(audio_format['channels']),
+                    "-b", str(audio_format['bits']),
+                    "-e", audio_format['encoding'],
+                    "-",
+                    "-t", "raw", "-"
+                ]
+                
+                print(f"Starting monitor capture for device: {audio_device}")
+                print(f"Parec command: {' '.join(parec_command)}")
+                print(f"Sox command: {' '.join(sox_command)}")
+                
+                parec_process = subprocess.Popen(
+                    parec_command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                
+                sox_process = subprocess.Popen(
+                    sox_command,
+                    stdin=parec_process.stdout,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                
+                self.stream_process = sox_process
+                
+            else:
+                sox_command = [
+                    "sox",
+                    "-q",
+                    "-d" if audio_device == "default" else audio_device,
+                    "-r", str(audio_format['rate']),
+                    "-c", str(audio_format['channels']),
+                    "-b", str(audio_format['bits']),
+                    "-e", audio_format['encoding'],
+                    "-t", "raw", "-"
+                ]
+                
+                print(f"Starting default capture for device: {audio_device}")
+                print(f"Sox command: {' '.join(sox_command)}")
+                
+                self.stream_process = subprocess.Popen(
+                    sox_command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
             
-            print(f"Starting audio capture...")
-            print(f"Command: {' '.join(sox_command)}")
-            
-            self.stream_process = subprocess.Popen(
-                sox_command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            
-            print(f"Audio capture started, streaming to backend...")
+            print(f"Starting real-time audio streaming for {duration_seconds} seconds...")
             
             start_time = datetime.datetime.now()
             chunk_size = 4096
-            chunks_sent = 0
+            silence_timer = None
             
             while (self.is_streaming and 
                    self.stream_process and 
-                   self.stream_process.poll() is None and
-                   bot_state['status'] != 'stopping'):
+                   self.stream_process.poll() is None) and bot_state['status'] != 'stopping':
                 
                 audio_data = self.stream_process.stdout.read(chunk_size)
                 if not audio_data:
@@ -699,33 +445,44 @@ class RealtimeAudioStreamer:
                     try:
                         await self.websocket.send(audio_data)
                         self.bytes_transmitted += len(audio_data)
-                        chunks_sent += 1
                         self.last_activity_time = datetime.datetime.now()
                         
+                        if silence_timer:
+                            silence_timer.cancel()
+                        
+                        silence_timer = asyncio.create_task(
+                            self._check_silence(300)
+                        )
+                        
                         elapsed = (datetime.datetime.now() - start_time).total_seconds()
-                        if int(elapsed) % 10 == 0 and elapsed > 0 and chunks_sent % 100 == 0:
+                        if int(elapsed) % 5 == 0 and elapsed > 0:
                             kb_transmitted = self.bytes_transmitted / 1024
-                            print(f"Streaming: {kb_transmitted:.2f} KB sent ({chunks_sent} chunks) in {int(elapsed)}s")
+                            print(f"📊 Streaming: {kb_transmitted:.2f} KB sent in {int(elapsed)}s")
                             
                     except Exception as e:
                         print(f"WebSocket send error: {e}")
                         self.is_connected = False
                         break
-                else:
-                    print("WebSocket disconnected, stopping stream")
-                    break
                 
                 elapsed = (datetime.datetime.now() - start_time).total_seconds()
                 if elapsed >= duration_seconds:
                     print(f"Reached duration limit: {duration_seconds}s")
                     break
-            
-            print(f"Audio streaming ended. Total: {self.bytes_transmitted / 1024:.2f} KB")
                     
         except Exception as e:
             print(f"Real-time streaming error: {e}")
         finally:
             await self.cleanup()
+    
+    async def _check_silence(self, max_silence_seconds):
+        """Check for silence and emit an event if detected"""
+        try:
+            await asyncio.sleep(max_silence_seconds)
+            time_since_last_activity = (datetime.datetime.now() - self.last_activity_time).total_seconds()
+            if time_since_last_activity >= max_silence_seconds:
+                print("No audio data for extended period, checking connection...")
+        except asyncio.CancelledError:
+            pass
     
     async def cleanup(self):
         """Clean up WebSocket connection and processes"""
@@ -753,8 +510,8 @@ class RealtimeAudioStreamer:
             await self.websocket.close()
             self.websocket = None
             
-        print(f"Audio streaming stopped. Total transmitted: {self.bytes_transmitted / 1024:.2f} KB")
-
+        print("Real-time streaming stopped")
+        print(f"Total bytes transmitted: {self.bytes_transmitted / 1024:.2f} KB")
 
 def make_request(url, headers, method="GET", data=None, files=None):
     if method == "POST":
@@ -805,10 +562,25 @@ def get_chrome_version():
     
     return 108
 
+def cleanup_chrome_processes():
+    """Clean up any existing Chrome processes"""
+    try:
+        if os.name == 'nt':  
+            subprocess.run("taskkill /f /im chrome.exe /t", shell=True)
+            subprocess.run("taskkill /f /im chromedriver.exe /t", shell=True)
+        else:  
+            subprocess.run("pkill -f chrome", shell=True)
+            subprocess.run("pkill -f chromedriver", shell=True)
+        print("Cleaned up existing Chrome processes")
+    except Exception as e:
+        print(f"Error cleaning up Chrome processes: {e}")
+
 
 async def join_meet():
     bot_state['status'] = 'running'
-    
+
+    cleanup_chrome_processes()
+
     meet_link = os.getenv("GMEET_LINK", "https://meet.google.com/mhj-bcdx-bgu")
     backend_url = os.getenv("BACKEND_URL", "http://localhost:3000")
     
@@ -845,23 +617,24 @@ async def join_meet():
     except (subprocess.CalledProcessError, FileNotFoundError):
         print("Error: sox is not installed or not in PATH")
 
-    options = uc.ChromeOptions()
-    options.add_argument("--use-fake-ui-for-media-stream")
-    options.add_argument("--window-size=1920x1080")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-setuid-sandbox")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--disable-application-cache")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--remote-debugging-port=9222")
-    log_path = "chromedriver.log"
-
     driver = None
 
     try:
         chrome_version = get_chrome_version()
         print(f"Detected Chrome version: {chrome_version}")
+        
+        options = uc.ChromeOptions()
+        options.add_argument("--use-fake-ui-for-media-stream")
+        options.add_argument("--window-size=1920x1080")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-setuid-sandbox")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--disable-application-cache")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--remote-debugging-port=9222")
+        
+        log_path = "chromedriver.log"
         
         driver = uc.Chrome(
             version_main=chrome_version,
@@ -871,19 +644,20 @@ async def join_meet():
         )
     except Exception as e:
         print(f"Error initializing Chrome driver: {e}")
-        options = uc.ChromeOptions()
-        options.add_argument("--use-fake-ui-for-media-stream")
-        options.add_argument("--window-size=1920x1080")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-setuid-sandbox")
-        options.add_argument("--disable-gpu")
         
         try:
+            fallback_options = uc.ChromeOptions()
+            fallback_options.add_argument("--use-fake-ui-for-media-stream")
+            fallback_options.add_argument("--window-size=1920x1080")
+            fallback_options.add_argument("--no-sandbox")
+            fallback_options.add_argument("--disable-setuid-sandbox")
+            fallback_options.add_argument("--disable-gpu")
+            
             driver = uc.Chrome(
                 version_main=108,
                 service_log_path=log_path, 
                 use_subprocess=False, 
-                options=options
+                options=fallback_options
             )
         except Exception as e2:
             print(f"Error with fallback Chrome driver: {e2}")
