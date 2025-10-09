@@ -945,7 +945,10 @@ async def join_meet():
     
     print("\nRecording completed!")
     
-    streaming_thread.join(timeout=10)
+    if streaming_thread:
+        for thread in streaming_thread:
+            if thread.is_alive():
+                thread.join(timeout=10)
 
     print("Cleaning up session...")
     if driver:
@@ -1006,7 +1009,7 @@ def run_production_server():
     except ImportError:
         print("Gunicorn not available, falling back to Flask development server")
         app.run(host='0.0.0.0', port=port, debug=False)
-        
+
 @click.command()
 @click.option('--meet-link', help='Google Meet link')
 @click.option('--duration', default=60, help='Duration in minutes')
