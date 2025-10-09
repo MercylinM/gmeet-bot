@@ -1,6 +1,7 @@
 import asyncio
 import os
 import subprocess
+import time
 import click
 import datetime
 import requests
@@ -31,8 +32,24 @@ bot_state = {
     'start_time': None,
     'thread': None,
     'driver': None,  
-    'audio_streamer': None 
+    'audio_streamer': None,
+    'last_health_check': datetime.datetime.now()
 }
+
+def keep_alive():
+    """Send periodic requests to keep the service alive"""
+    while True:
+        try:
+            bot_state['last_health_check'] = datetime.datetime.now()
+            
+            time.sleep(600)
+        except Exception as e:
+            print(f"Keep-alive error: {e}")
+            time.sleep(60)  
+
+keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
+keep_alive_thread.start()
+
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -42,7 +59,7 @@ def health():
         'bot_status': bot_state['status'],
         'current_meeting': bot_state['current_meeting'],
         'uptime': (datetime.datetime.now() - bot_state['start_time']).total_seconds() if bot_state['start_time'] else 0
-    })
+    }), 200
 
 @app.route('/start', methods=['POST'])
 def start_bot():
@@ -952,9 +969,8 @@ def run_flask_server():
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 def run_production_server():
-    """Run production server with better configuration"""
+    """Run production server with better configuration for Render"""
     port = int(os.getenv('PORT', 10000))
-    workers = int(os.getenv('WORKERS', 2))
     
     try:
         import gunicorn.app.base
@@ -974,19 +990,23 @@ def run_production_server():
         
         options = {
             'bind': f'0.0.0.0:{port}',
-            'workers': workers,
+            'workers': 1,  
             'timeout': 120,
             'accesslog': '-',
-            'errorlog': '-'
+            'errorlog': '-',
+            'keepalive': 5,
+            'max_requests': 1000,
+            'max_requests_jitter': 100,
+            'preload_app': True
         }
         
-        print(f"Starting production server on port {port} with {workers} workers")
+        print(f"Starting production server on port {port}")
         GunicornApp(app, options).run()
         
     except ImportError:
         print("Gunicorn not available, falling back to Flask development server")
         app.run(host='0.0.0.0', port=port, debug=False)
-
+        
 @click.command()
 @click.option('--meet-link', help='Google Meet link')
 @click.option('--duration', default=60, help='Duration in minutes')
