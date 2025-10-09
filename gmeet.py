@@ -564,12 +564,12 @@ async def join_meet():
         print(f"Cannot connect to backend: {e}")
         
 
-    print("Cleaning screenshots")
-    if os.path.exists("screenshots"):
-        for f in os.listdir("screenshots"):
-            os.remove(f"screenshots/{f}")
-    else:
-        os.mkdir("screenshots")
+    # print("Cleaning screenshots")
+    # if os.path.exists("screenshots"):
+    #     for f in os.listdir("screenshots"):
+    #         os.remove(f"screenshots/{f}")
+    # else:
+    #     os.mkdir("screenshots")
 
     print("Setting up audio recording with sox")
     try:
@@ -586,14 +586,30 @@ async def join_meet():
         
         options = uc.ChromeOptions()
         options.add_argument("--use-fake-ui-for-media-stream")
-        options.add_argument("--window-size=1920x1080")
+        options.add_argument("--window-size=1280x720")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-setuid-sandbox")
         options.add_argument("--disable-gpu")
         options.add_argument("--disable-extensions")
         options.add_argument("--disable-application-cache")
         options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-features=VizDisplayCompositor")
+        options.add_argument("--disable-features=TranslateUI")
+        options.add_argument("--disable-ipc-flooding-protection")
+        options.add_argument("--disable-background-timer-throttling")
+        options.add_argument("--disable-renderer-backgrounding")
+        options.add_argument("--disable-backgrounding-occluded-windows")
+        options.add_argument("--disable-features=AudioServiceOutOfProcess")
         options.add_argument("--remote-debugging-port=9222")
+
+        options.add_argument("--no-first-run")
+        options.add_argument("--no-default-browser-check")
+        options.add_argument("--disable-default-apps")
+        options.add_argument("--disable-sync")
+        options.add_argument("--metrics-recording-only")
+        options.add_argument("--disable-password-generation")
+        options.add_argument("--disable-translate")
+        options.add_argument("--disable-features=AutofillServerCommunication")
         
         log_path = "chromedriver.log"
         
@@ -633,7 +649,7 @@ async def join_meet():
             return
     
     bot_state['driver'] = driver
-    driver.set_window_size(1920, 1080)
+    driver.set_window_size(1280, 720)
 
     email = os.getenv("GMAIL_USER_EMAIL", "")
     password = os.getenv("GMAIL_USER_PASSWORD", "")
@@ -655,7 +671,7 @@ async def join_meet():
 
     print(f"Navigating to meet link: {meet_link}")
     driver.get(meet_link)
-    sleep(5)
+    sleep(3)
 
     try:
         driver.execute_cdp_cmd(
@@ -678,31 +694,31 @@ async def join_meet():
         cleanup_bot()
         return
 
-    print("Taking screenshot")
-    driver.save_screenshot("screenshots/initial.png")
+    # print("Taking screenshot")
+    # driver.save_screenshot("screenshots/initial.png")
 
     try:
         driver.find_element(
             By.XPATH,
             "/html/body/div/div[3]/div[2]/div/div/div/div/div[2]/div/div[1]/button",
         ).click()
-        sleep(2)
+        sleep(1)
     except:
         print("No popup")
 
     print("Disable microphone")
-    sleep(10)
+    sleep(5)
 
     missing_mic = False
 
     try:
         print("Try to dismiss missing mic")
         driver.find_element(By.CLASS_NAME, "VfPpkd-vQzf8d").find_element(By.XPATH, "..")
-        sleep(2)
-        driver.save_screenshot("screenshots/missing_mic.png")
+        sleep(1)
+        # driver.save_screenshot("screenshots/missing_mic.png")
 
-        with open("screenshots/webpage.html", "w") as f:
-            f.write(driver.page_source)
+        # with open("screenshots/webpage.html", "w") as f:
+        #     f.write(driver.page_source)
         missing_mic = True
     except:
         pass
@@ -713,8 +729,8 @@ async def join_meet():
             By.XPATH,
             "/html/body/div/div[3]/div[2]/div/div/div/div/div[2]/div/div[1]/button",
         ).click()
-        sleep(2)
-        driver.save_screenshot("screenshots/allow_microphone.png")
+        sleep(1)
+        # driver.save_screenshot("screenshots/allow_microphone.png")
     except:
         print("No Allow Microphone popup")
 
@@ -727,8 +743,8 @@ async def join_meet():
     except:
         print("No microphone to disable")
 
-    sleep(2)
-    driver.save_screenshot("screenshots/disable_microphone.png")
+    sleep(1)
+    # driver.save_screenshot("screenshots/disable_microphone.png")
 
     print("Disable camera")
     if not missing_mic:
@@ -736,10 +752,10 @@ async def join_meet():
             By.XPATH,
             '//*[@id="yDmH0d"]/c-wiz/div/div/div[14]/div[3]/div/div[2]/div[4]/div/div/div[1]/div[1]/div/div[6]/div[2]/div',
         ).click()
-        sleep(2)
+        sleep(1)
     else:
         print("assuming missing mic = missing camera")
-    driver.save_screenshot("screenshots/disable_camera.png")
+    # driver.save_screenshot("screenshots/disable_camera.png")
     
     try:
         print("Try to set name")
@@ -757,7 +773,7 @@ async def join_meet():
                 name_input.click()
                 sleep(1)
                 name_input.send_keys("Recos AI Bot")
-                sleep(2)
+                sleep(1)
                 driver.save_screenshot("screenshots/give_non_registered_name.png")
                 name_set = True
                 break
@@ -779,8 +795,8 @@ async def join_meet():
                 try:
                     join_button = driver.find_element(By.XPATH, selector)
                     join_button.click()
-                    sleep(5)
-                    driver.save_screenshot("screenshots/join_button_clicked.png")
+                    sleep(2)
+                    # driver.save_screenshot("screenshots/join_button_clicked.png")
                     button_clicked = True
                     break
                 except:
@@ -790,7 +806,7 @@ async def join_meet():
                 print("Could not find or click the join button")
     except Exception as e:
         print(f"Error setting name: {e}")
-        driver.save_screenshot("screenshots/name_error.png")
+        # driver.save_screenshot("screenshots/name_error.png")
 
     if bot_state['status'] == 'stopping':
         print("Stop signal received, cleaning up")
@@ -799,7 +815,7 @@ async def join_meet():
 
     try:
         print("Looking for any join button...")
-        wait = WebDriverWait(driver, 10)
+        wait = WebDriverWait(driver, 5)
         
         join_button_selectors = [
             "//span[contains(text(), 'Ask to join')]",
@@ -842,7 +858,7 @@ async def join_meet():
                 join_button = wait.until(EC.element_to_be_clickable((By.XPATH, selector)))
                 join_button.click()
                 print(f"Clicked join button using selector: {selector}")
-                driver.save_screenshot("screenshots/join_button_clicked.png")
+                # driver.save_screenshot("screenshots/join_button_clicked.png")
                 joined = True
                 break
             except TimeoutException:
@@ -850,10 +866,10 @@ async def join_meet():
         
         if not joined:
             print("Could not find any join button")
-            driver.save_screenshot("screenshots/no_join_button.png")
+            # driver.save_screenshot("screenshots/no_join_button.png")
     except Exception as e:
         print(f"Error handling join button: {e}")
-        driver.save_screenshot("screenshots/join_button_error.png")
+        # driver.save_screenshot("screenshots/join_button_error.png")
 
     if bot_state['status'] == 'stopping':
         print("Stop signal received, cleaning up")
@@ -862,10 +878,10 @@ async def join_meet():
 
     print("Waiting for meeting to load...")
     sleep(10)
-    driver.save_screenshot("screenshots/meeting_loading.png")
+    # driver.save_screenshot("screenshots/meeting_loading.png")
 
     try:
-        wait = WebDriverWait(driver, 10)
+        wait = WebDriverWait(driver, 5)
         
         meeting_indicators = [
             "//div[contains(@data-self-name, 'Recos AI Bot')]",
@@ -891,26 +907,26 @@ async def join_meet():
         
         if in_meeting:
             print("Successfully joined the meeting!")
-            driver.save_screenshot("screenshots/in_meeting.png")
+            # driver.save_screenshot("screenshots/in_meeting.png")
         else:
             print("Could not confirm if in meeting, proceeding anyway...")
-            driver.save_screenshot("screenshots/meeting_status_unknown.png")
+            # driver.save_screenshot("screenshots/meeting_status_unknown.png")
     except Exception as e:
         print(f"Error checking meeting status: {e}")
-        driver.save_screenshot("screenshots/meeting_status_error.png")
+        # driver.save_screenshot("screenshots/meeting_status_error.png")
 
     if bot_state['status'] == 'stopping':
         print("Stop signal received, cleaning up")
         cleanup_bot()
         return
     
-    try:
-        print("Attempting to go fullscreen...")
-        driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.F11)
-        sleep(2)
-        print("Pressed F11 to go fullscreen")
-    except Exception as e:
-        print(f"Error going fullscreen: {e}")
+    # try:
+    #     print("Attempting to go fullscreen...")
+    #     driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.F11)
+    #     sleep(1)
+    #     print("Pressed F11 to go fullscreen")
+    # except Exception as e:
+    #     print(f"Error going fullscreen: {e}")
 
     duration_minutes = int(os.getenv("DURATION_IN_MINUTES", "60"))  
     duration_seconds = duration_minutes * 60
