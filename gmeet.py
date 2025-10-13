@@ -276,7 +276,7 @@ class RealtimeAudioStreamer:
 
     def _capture_audio(self):
         """Capture audio using sox and put it in the queue"""
-        print("🎙️ Starting audio capture...")
+        print("Starting audio capture...")
         
         try:
             subprocess.run(["sox", "--version"], capture_output=True, check=True)
@@ -298,7 +298,7 @@ class RealtimeAudioStreamer:
             # "silence", "1", "0.1", "1%"
         ]
 
-        print(f"🔧 Sox command: {' '.join(sox_command)}")
+        print(f"Sox command: {' '.join(sox_command)}")
 
         try:
             self.stream_process = subprocess.Popen(
@@ -959,7 +959,6 @@ async def join_meet():
                   f"Bytes sent={audio_streamer.bytes_transmitted/1024:.2f}KB")
             last_status_check = elapsed
     
-    print("\nRecording completed!")
     
     if streaming_thread:
         for thread in streaming_thread:

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -e  # Exit on error
+set -e  
 
 echo "Starting initialization..."
 
@@ -52,7 +52,7 @@ else
     echo "Attempting to continue without PulseAudio..."
 fi
 
-# List available audio devices for debugging
+# List available audio devices 
 echo "Available audio devices:"
 pactl list short sources 2>/dev/null || echo "Could not list audio sources"
 
