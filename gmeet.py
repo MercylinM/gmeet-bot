@@ -41,6 +41,14 @@ def keep_alive():
     while True:
         try:
             bot_state['last_health_check'] = datetime.datetime.now()
+
+            health_url = "https://gmeet-bot.onrender.com/health"
+            response = requests.get(health_url)
+            if response.status_code == 200:
+                print("Keep-alive ping successful")
+            else:
+                print(f"Keep-alive ping failed with status: {response.status_code}")
+
             
             time.sleep(600)
         except Exception as e:
