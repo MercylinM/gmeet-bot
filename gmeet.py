@@ -550,9 +550,6 @@ def index():
 #         }
     
 
-import sounddevice as sd
-import numpy as np
-
 class RealtimeAudioStreamer:
     def __init__(self, backend_url):
         self.backend_url = backend_url
@@ -911,8 +908,6 @@ class RealtimeAudioStreamer:
             'queue_size': self.audio_queue.qsize(),
             'reconnect_attempts': self.reconnect_attempts
         }
-    
-    
 def make_request(url, headers, method="GET", data=None, files=None):
     if method == "POST":
         response = requests.post(url, headers=headers, json=data, files=files)
