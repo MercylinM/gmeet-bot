@@ -76,6 +76,7 @@ echo "Available audio sinks:"
 pactl list short sinks 2>/dev/null || echo "Could not list audio sinks"
 
 # Test sounddevice availability
+# Test sounddevice availability
 echo "Testing sounddevice Python library..."
 python3 -c "
 import sounddevice as sd
@@ -85,9 +86,13 @@ print('Available devices:')
 devices = sd.query_devices()
 for i, dev in enumerate(devices):
     if dev['max_input_channels'] > 0:
-        print(f'  Input {i}: {dev[\\\"name\\\"]} ({dev[\\\"max_input_channels\\\"]} channels)')
+        name = dev['name']
+        channels = dev['max_input_channels']
+        print(f'  Input {i}: {name} ({channels} channels)')
     if dev['max_output_channels'] > 0:
-        print(f'  Output {i}: {dev[\\\"name\\\"]} ({dev[\\\"max_output_channels\\\"]} channels)')
+        name = dev['name']
+        channels = dev['max_output_channels']
+        print(f'  Output {i}: {name} ({channels} channels)')
 "
 
 # Run the Flask server (bot will wait for HTTP trigger)
