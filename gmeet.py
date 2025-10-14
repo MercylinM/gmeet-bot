@@ -14,6 +14,8 @@ import sys
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from queue import Queue, Empty
+import sounddevice as sd
+import numpy as np
 
 
 import undetected_chromedriver as uc
@@ -202,6 +204,355 @@ def index():
         }
     })
 
+# class RealtimeAudioStreamer:
+#     def __init__(self, backend_url):
+#         self.backend_url = backend_url
+#         self.ws_url = backend_url.replace('http', 'ws') + '/ws/audio'
+#         self.websocket = None
+#         self.is_streaming = False
+#         self.stream_process = None
+#         self.bytes_transmitted = 0
+#         self.last_activity_time = datetime.datetime.now()
+#         self.is_connected = False
+#         self.reconnect_attempts = 0
+#         self.max_reconnect_attempts = 10
+#         self.reconnect_delay = 5
+#         self.audio_queue = Queue()
+#         self._stop_event = threading.Event()
+        
+#     async def connect_websocket(self):
+#         """Connect to backend WebSocket for audio streaming"""
+#         try:
+#             print(f"Connecting to audio WebSocket: {self.ws_url}")
+            
+#             self.websocket = await websockets.connect(
+#                 self.ws_url,
+#                 ping_interval=20,
+#                 ping_timeout=10,
+#                 close_timeout=5,
+#                 max_size=None,  
+#             )
+            
+#             print("Connected to audio WebSocket")
+#             self.is_connected = True
+#             self.reconnect_attempts = 0
+#             return True
+            
+#         except Exception as e:
+#             print(f"WebSocket connection failed: {e}")
+#             self.is_connected = False
+#             self.reconnect_attempts += 1
+#             return False
+
+#     def _is_websocket_open(self):
+#         """Check if WebSocket connection is open - FIXED VERSION"""
+#         if not self.websocket:
+#             return False
+        
+#         try:
+#             if hasattr(self.websocket, 'state'):
+#                 return self.websocket.state == websockets.protocol.State.OPEN
+#             elif hasattr(self.websocket, 'closed'):
+#                 return not self.websocket.closed
+#             else:
+#                 return True
+#         except Exception:
+#             return False
+
+#     def start_realtime_streaming(self, duration_minutes=60):
+#         """Start real-time audio streaming to backend"""
+#         if self.is_streaming:
+#             print("Audio streaming already running")
+#             return None
+
+#         self.is_streaming = True
+#         self._stop_event.clear()
+        
+#         capture_thread = threading.Thread(
+#             target=self._capture_audio,
+#             daemon=True,
+#             name="AudioCaptureThread"
+#         )
+#         capture_thread.start()
+        
+#         sender_thread = threading.Thread(
+#             target=self._run_websocket_sender,
+#             daemon=True,
+#             name="WebSocketSenderThread"
+#         )
+#         sender_thread.start()
+        
+#         return [capture_thread, sender_thread]
+
+#     def _capture_audio(self):
+#         """Capture audio using sox and put it in the queue"""
+#         print("Starting audio capture...")
+
+#         try:
+#             subprocess.run(["sox", "--version"], capture_output=True, check=True)
+#             print("Sox is available")
+#         except (subprocess.CalledProcessError, FileNotFoundError):
+#             print("Error: sox is not installed or not in PATH")
+#             self.is_streaming = False
+#             return
+
+#         # Check if we're in production (e.g., by environment variable)
+#         in_production = os.getenv("FLASK_ENV", "").lower() == "production" or \
+#                         os.getenv("RUN_AS_SERVER", "").lower() == "true"
+
+#         if in_production:
+#             # Use PulseAudio virtual speaker monitor for capturing output audio
+#             try:
+#                 result = subprocess.run(
+#                     ["pactl", "list", "short", "sources"],
+#                     capture_output=True,
+#                     text=True,
+#                     check=True
+#                 )
+#                 print(f"Available audio sources:\n{result.stdout}")
+#             except Exception as e:
+#                 print(f"Could not list audio sources: {e}")
+
+#             audio_source = "virtual_speaker.monitor"  # Your virtual sink monitor
+
+#             parec_command = [
+#                 "parec",
+#                 "--format=s16le",
+#                 "--rate=16000",
+#                 "--channels=1",
+#                 f"--device={audio_source}"
+#             ]
+
+#             sox_command = [
+#                 "sox",
+#                 "-q",
+#                 "-t", "raw",
+#                 "-r", "16000",
+#                 "-c", "1",
+#                 "-b", "16",
+#                 "-e", "signed-integer",
+#                 "-",  # stdin from parec
+#                 "-t", "raw",
+#                 "-"
+#             ]
+
+#             print(f"Parec command: {' '.join(parec_command)}")
+#             print(f"Sox command: {' '.join(sox_command)}")
+
+#             try:
+#                 parec_process = subprocess.Popen(
+#                     parec_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=4096
+#                 )
+#                 sox_process = subprocess.Popen(
+#                     sox_command, stdin=parec_process.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=4096
+#                 )
+#                 parec_process.stdout.close()
+#                 self.stream_process = sox_process
+#                 print(f"Started audio capture (Sox PID: {sox_process.pid}, Parec PID: {parec_process.pid})")
+
+#                 chunk_size = 2048
+
+#                 while self.is_streaming and not self._stop_event.is_set() and self.stream_process and self.stream_process.poll() is None:
+#                     try:
+#                         audio_data = self.stream_process.stdout.read(chunk_size)
+#                         if not audio_data:
+#                             time.sleep(0.1)
+#                             continue
+#                         self.audio_queue.put(audio_data)
+#                         self.bytes_transmitted += len(audio_data)
+#                         self.last_activity_time = datetime.datetime.now()
+
+#                         if self.bytes_transmitted % (100 * 1024) < chunk_size:
+#                             print(f"📊 Audio captured: {self.bytes_transmitted / 1024:.2f} KB")
+#                     except Exception as e:
+#                         print(f"Error reading audio data: {e}")
+#                         break
+
+#             except Exception as e:
+#                 print(f"Audio capture error: {e}")
+#             finally:
+#                 self._cleanup_audio_capture()
+
+#         else:
+#             # Original localhost capture method for simplicity, like "sox -d" capturing mic directly
+#             sox_command = [
+#                 "sox",
+#                 "-q",
+#                 "-d",  # default audio device (microphone)
+#                 "-r", "16000",
+#                 "-c", "1",
+#                 "-b", "16",
+#                 "-e", "signed-integer",
+#                 "-t", "raw",
+#                 "-"
+#             ]
+#             print(f"Sox command (localhost): {' '.join(sox_command)}")
+#             try:
+#                 self.stream_process = subprocess.Popen(
+#                     sox_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=4096
+#                 )
+#                 chunk_size = 2048
+
+#                 while self.is_streaming and not self._stop_event.is_set() and self.stream_process and self.stream_process.poll() is None:
+#                     try:
+#                         audio_data = self.stream_process.stdout.read(chunk_size)
+#                         if not audio_data:
+#                             time.sleep(0.1)
+#                             continue
+#                         self.audio_queue.put(audio_data)
+#                         self.bytes_transmitted += len(audio_data)
+#                         self.last_activity_time = datetime.datetime.now()
+
+#                         if self.bytes_transmitted % (100 * 1024) < chunk_size:
+#                             print(f"📊 Audio captured: {self.bytes_transmitted / 1024:.2f} KB")
+#                     except Exception as e:
+#                         print(f"Error reading audio data: {e}")
+#                         break
+
+#             except Exception as e:
+#                 print(f"Audio capture error (localhost): {e}")
+#             finally:
+#                 self._cleanup_audio_capture()
+
+#     def _run_websocket_sender(self):
+#         """Run WebSocket sender in a separate event loop"""
+#         loop = asyncio.new_event_loop()
+#         asyncio.set_event_loop(loop)
+#         try:
+#             loop.run_until_complete(self._websocket_sender_async())
+#         finally:
+#             loop.close()
+
+#     async def _websocket_sender_async(self):
+#         """Async WebSocket sender that reads from queue and sends to server"""
+#         print("Starting WebSocket sender...")
+        
+#         if not await self.connect_websocket():
+#             print("Failed initial WebSocket connection")
+#             self.is_streaming = False
+#             return
+
+#         last_stats_time = datetime.datetime.now()
+        
+#         while self.is_streaming and not self._stop_event.is_set():
+#             try:
+#                 try:
+#                     audio_data = self.audio_queue.get(timeout=1.0)
+#                 except Empty:
+#                     continue
+
+#                 if self._is_websocket_open():
+#                     try:
+#                         await self.websocket.send(audio_data)
+                        
+#                         current_time = datetime.datetime.now()
+#                         if (current_time - last_stats_time).total_seconds() >= 30:
+#                             kb_transmitted = self.bytes_transmitted / 1024
+#                             queue_size = self.audio_queue.qsize()
+#                             print(f"📈 Streaming stats: {kb_transmitted:.2f} KB sent, queue: {queue_size}")
+#                             last_stats_time = current_time
+                            
+#                     except (websockets.exceptions.ConnectionClosed, 
+#                            websockets.exceptions.WebSocketException) as e:
+#                         print(f"🔌 WebSocket send error: {e}")
+#                         self.is_connected = False
+                        
+#                         if not await self._reconnect_websocket():
+#                             print("Failed to reconnect WebSocket")
+#                             break
+                
+#                 self.audio_queue.task_done()
+                
+#             except Exception as e:
+#                 print(f"WebSocket sender error: {e}")
+#                 await asyncio.sleep(0.1)
+
+#         print("WebSocket sender stopped")
+
+#     async def _reconnect_websocket(self):
+#         """Attempt to reconnect WebSocket with backoff"""
+#         if self.reconnect_attempts >= self.max_reconnect_attempts:
+#             print("Max reconnection attempts reached")
+#             return False
+
+#         delay = min(self.reconnect_delay * (2 ** self.reconnect_attempts), 60)
+#         print(f"Attempting reconnect in {delay}s (attempt {self.reconnect_attempts + 1})")
+        
+#         await asyncio.sleep(delay)
+        
+#         if await self.connect_websocket():
+#             print("WebSocket reconnected successfully")
+#             while not self.audio_queue.empty():
+#                 try:
+#                     self.audio_queue.get_nowait()
+#                     self.audio_queue.task_done()
+#                 except Empty:
+#                     break
+#             return True
+#         else:
+#             return False
+
+#     def _cleanup_audio_capture(self):
+#         """Clean up audio capture resources"""
+#         if self.stream_process:
+#             print(f"Stopping audio process (PID: {self.stream_process.pid})...")
+#             try:
+#                 self.stream_process.terminate()
+#                 try:
+#                     self.stream_process.wait(timeout=5)
+#                 except subprocess.TimeoutExpired:
+#                     self.stream_process.kill()
+#                     self.stream_process.wait()
+#             except Exception as e:
+#                 print(f"Error stopping audio process: {e}")
+#             finally:
+#                 self.stream_process = None
+
+#     async def cleanup(self):
+#         """Clean up all streaming resources"""
+#         print("Cleaning up audio streamer...")
+#         self.is_streaming = False
+#         self._stop_event.set()
+#         self.is_connected = False
+        
+#         self._cleanup_audio_capture()
+        
+#         while not self.audio_queue.empty():
+#             try:
+#                 self.audio_queue.get_nowait()
+#                 self.audio_queue.task_done()
+#             except Empty:
+#                 break
+        
+#         if self.websocket and not self.websocket.closed:
+#             try:
+#                 await self.websocket.close()
+#                 print("Audio WebSocket connection closed")
+#             except Exception as e:
+#                 print(f"Error closing WebSocket: {e}")
+#             self.websocket = None
+        
+#         print(f"Final stats: {self.bytes_transmitted / 1024:.2f} KB transmitted total")
+
+#     def stop_streaming(self):
+#         """Stop streaming synchronously"""
+#         self.is_streaming = False
+#         self._stop_event.set()
+        
+#     def get_status(self):
+#         """Get current streaming status"""
+#         return {
+#             'is_streaming': self.is_streaming,
+#             'is_connected': self.is_connected,
+#             'bytes_transmitted': self.bytes_transmitted,
+#             'queue_size': self.audio_queue.qsize(),
+#             'reconnect_attempts': self.reconnect_attempts
+#         }
+    
+
+import sounddevice as sd
+import numpy as np
+
 class RealtimeAudioStreamer:
     def __init__(self, backend_url):
         self.backend_url = backend_url
@@ -217,36 +568,6 @@ class RealtimeAudioStreamer:
         self.reconnect_delay = 5
         self.audio_queue = Queue()
         self._stop_event = threading.Event()
-
-        # Detect if running in production (Docker/Render)
-        self.is_production = self._detect_production_environment()
-
-        
-    def _detect_production_environment(self):
-        """Detect if running in a production environment"""
-        # Check for common production environment indicators
-        if os.getenv('PORT') and os.getenv('PORT') != '3000':
-            return True
-        
-        # Check for Render-specific environment variables
-        if os.getenv('RENDER_SERVICE_ID') or os.getenv('RENDER_EXTERNAL_URL'):
-            return True
-            
-        # Check if running in Docker
-        try:
-            with open('/proc/1/cgroup', 'r') as f:
-                content = f.read()
-                if 'docker' in content or 'kubepods' in content:
-                    return True
-        except:
-            pass
-            
-        # Check for Docker-specific files
-        if os.path.exists('/.dockerenv'):
-            return True
-            
-        return False
-
         
     async def connect_websocket(self):
         """Connect to backend WebSocket for audio streaming"""
@@ -273,7 +594,7 @@ class RealtimeAudioStreamer:
             return False
 
     def _is_websocket_open(self):
-        """Check if WebSocket connection is open - FIXED VERSION"""
+        """Check if WebSocket connection is open"""
         if not self.websocket:
             return False
         
@@ -312,140 +633,90 @@ class RealtimeAudioStreamer:
         
         return [capture_thread, sender_thread]
 
-    # def _capture_audio(self):
-    #     """Capture audio using sox and put it in the queue"""
-    #     print("Starting audio capture...")
-
-    #     try:
-    #         subprocess.run(["sox", "--version"], capture_output=True, check=True)
-    #         print("Sox is available")
-    #     except (subprocess.CalledProcessError, FileNotFoundError):
-    #         print("Error: sox is not installed or not in PATH")
-    #         self.is_streaming = False
-    #         return
-
-    #     # Check if we're in production (e.g., by environment variable)
-    #     in_production = os.getenv("FLASK_ENV", "").lower() == "production" or \
-    #                     os.getenv("RUN_AS_SERVER", "").lower() == "true"
-
-    #     if in_production:
-    #         # Use PulseAudio virtual speaker monitor for capturing output audio
-    #         try:
-    #             result = subprocess.run(
-    #                 ["pactl", "list", "short", "sources"],
-    #                 capture_output=True,
-    #                 text=True,
-    #                 check=True
-    #             )
-    #             print(f"Available audio sources:\n{result.stdout}")
-    #         except Exception as e:
-    #             print(f"Could not list audio sources: {e}")
-
-    #         audio_source = "virtual_speaker.monitor"  # Your virtual sink monitor
-
-    #         parec_command = [
-    #             "parec",
-    #             "--format=s16le",
-    #             "--rate=16000",
-    #             "--channels=1",
-    #             f"--device={audio_source}"
-    #         ]
-
-    #         sox_command = [
-    #             "sox",
-    #             "-q",
-    #             "-t", "raw",
-    #             "-r", "16000",
-    #             "-c", "1",
-    #             "-b", "16",
-    #             "-e", "signed-integer",
-    #             "-",  # stdin from parec
-    #             "-t", "raw",
-    #             "-"
-    #         ]
-
-    #         print(f"Parec command: {' '.join(parec_command)}")
-    #         print(f"Sox command: {' '.join(sox_command)}")
-
-    #         try:
-    #             parec_process = subprocess.Popen(
-    #                 parec_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=4096
-    #             )
-    #             sox_process = subprocess.Popen(
-    #                 sox_command, stdin=parec_process.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=4096
-    #             )
-    #             parec_process.stdout.close()
-    #             self.stream_process = sox_process
-    #             print(f"Started audio capture (Sox PID: {sox_process.pid}, Parec PID: {parec_process.pid})")
-
-    #             chunk_size = 2048
-
-    #             while self.is_streaming and not self._stop_event.is_set() and self.stream_process and self.stream_process.poll() is None:
-    #                 try:
-    #                     audio_data = self.stream_process.stdout.read(chunk_size)
-    #                     if not audio_data:
-    #                         time.sleep(0.1)
-    #                         continue
-    #                     self.audio_queue.put(audio_data)
-    #                     self.bytes_transmitted += len(audio_data)
-    #                     self.last_activity_time = datetime.datetime.now()
-
-    #                     if self.bytes_transmitted % (100 * 1024) < chunk_size:
-    #                         print(f"📊 Audio captured: {self.bytes_transmitted / 1024:.2f} KB")
-    #                 except Exception as e:
-    #                     print(f"Error reading audio data: {e}")
-    #                     break
-
-    #         except Exception as e:
-    #             print(f"Audio capture error: {e}")
-    #         finally:
-    #             self._cleanup_audio_capture()
-
-    #     else:
-    #         # Original localhost capture method for simplicity, like "sox -d" capturing mic directly
-    #         sox_command = [
-    #             "sox",
-    #             "-q",
-    #             "-d",  # default audio device (microphone)
-    #             "-r", "16000",
-    #             "-c", "1",
-    #             "-b", "16",
-    #             "-e", "signed-integer",
-    #             "-t", "raw",
-    #             "-"
-    #         ]
-    #         print(f"Sox command (localhost): {' '.join(sox_command)}")
-    #         try:
-    #             self.stream_process = subprocess.Popen(
-    #                 sox_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=4096
-    #             )
-    #             chunk_size = 2048
-
-    #             while self.is_streaming and not self._stop_event.is_set() and self.stream_process and self.stream_process.poll() is None:
-    #                 try:
-    #                     audio_data = self.stream_process.stdout.read(chunk_size)
-    #                     if not audio_data:
-    #                         time.sleep(0.1)
-    #                         continue
-    #                     self.audio_queue.put(audio_data)
-    #                     self.bytes_transmitted += len(audio_data)
-    #                     self.last_activity_time = datetime.datetime.now()
-
-    #                     if self.bytes_transmitted % (100 * 1024) < chunk_size:
-    #                         print(f"📊 Audio captured: {self.bytes_transmitted / 1024:.2f} KB")
-    #                 except Exception as e:
-    #                     print(f"Error reading audio data: {e}")
-    #                     break
-
-    #         except Exception as e:
-    #             print(f"Audio capture error (localhost): {e}")
-    #         finally:
-    #             self._cleanup_audio_capture()
-
-
     def _capture_audio(self):
-        """Capture audio using sox and put it in the queue"""
+        """Capture audio using sounddevice or sox based on environment"""
         print("Starting audio capture...")
+        
+        # Check if we're in production
+        in_production = os.getenv("FLASK_ENV", "").lower() == "production" or \
+                        os.getenv("RUN_AS_SERVER", "").lower() == "true"
+        
+        if in_production:
+            self._capture_audio_sounddevice()
+        else:
+            self._capture_audio_sox()
+
+    def _capture_audio_sounddevice(self):
+        """Capture audio using sounddevice library for production"""
+        print("🎙️ Using sounddevice for audio capture in production")
+        
+        try:
+            # List available audio devices
+            devices = sd.query_devices()
+            print(f"Found {len(devices)} audio devices")
+            
+            # Find the virtual speaker monitor device
+            virtual_device_id = None
+            for i, device in enumerate(devices):
+                if 'virtual_speaker.monitor' in device['name'].lower():
+                    virtual_device_id = i
+                    print(f"Found virtual speaker monitor at device {i}: {device['name']}")
+                    break
+            
+            if virtual_device_id is None:
+                print("Virtual speaker monitor not found, listing all devices:")
+                for i, device in enumerate(devices):
+                    print(f"Device {i}: {device['name']} (inputs: {device['max_input_channels']}, outputs: {device['max_output_channels']})")
+                
+                # Try to find any device with input channels
+                for i, device in enumerate(devices):
+                    if device['max_input_channels'] > 0:
+                        virtual_device_id = i
+                        print(f"Using device {i} as fallback: {device['name']}")
+                        break
+            
+            if virtual_device_id is None:
+                print("No suitable audio device found")
+                self.is_streaming = False
+                return
+            
+            # Audio callback function
+            def audio_callback(indata, frames, time_info, status):
+                if status:
+                    print(f"Audio callback status: {status}")
+                
+                if self.is_streaming and not self._stop_event.is_set():
+                    # Convert numpy array to bytes
+                    audio_bytes = indata.tobytes()
+                    self.audio_queue.put(audio_bytes)
+                    self.bytes_transmitted += len(audio_bytes)
+                    self.last_activity_time = datetime.datetime.now()
+                    
+                    # Log progress every 100KB
+                    if self.bytes_transmitted % (100 * 1024) < len(audio_bytes):
+                        print(f"📊 Audio captured: {self.bytes_transmitted / 1024:.2f} KB")
+            
+            # Start the audio stream
+            with sd.InputStream(
+                device=virtual_device_id,
+                channels=1,
+                samplerate=16000,
+                dtype=np.int16,
+                blocksize=1024,
+                callback=audio_callback
+            ):
+                print(f"Audio stream started with device {virtual_device_id}")
+                
+                while self.is_streaming and not self._stop_event.is_set():
+                    sd.sleep(0.1)  # Small sleep to prevent busy waiting
+                
+        except Exception as e:
+            print(f"Error with sounddevice audio capture: {e}")
+            self.is_streaming = False
+
+    def _capture_audio_sox(self):
+        """Capture audio using sox for localhost"""
+        print("🏠 Using sox for audio capture in localhost")
         
         try:
             subprocess.run(["sox", "--version"], capture_output=True, check=True)
@@ -455,42 +726,30 @@ class RealtimeAudioStreamer:
             self.is_streaming = False
             return
 
-        # Use different audio capture methods based on environment
-        if self.is_production:
-            return self._capture_audio_production()
-        else:
-            return self._capture_audio_localhost()
-
-
-    def _capture_audio_localhost(self):
-        """Capture audio for localhost environment"""
-        print("Using localhost audio capture method")
-        
         sox_command = [
             "sox",
-            "-q",                    
-            "-d",                    
-            "-r", "16000",           
-            "-c", "1",               
-            "-b", "16",              
-            "-e", "signed-integer",  
-            "-t", "raw", "-"
+            "-q",
+            "-d",  # default audio device (microphone)
+            "-r", "16000",
+            "-c", "1",
+            "-b", "16",
+            "-e", "signed-integer",
+            "-t", "raw",
+            "-"
         ]
-
-        print(f"Sox command: {' '.join(sox_command)}")
-
+        
+        print(f"Sox command (localhost): {' '.join(sox_command)}")
+        
         try:
             self.stream_process = subprocess.Popen(
-                sox_command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                sox_command, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE, 
                 bufsize=4096
             )
-
-            print(f"Started audio capture process (PID: {self.stream_process.pid})")
-
-            chunk_size = 2048  
             
+            chunk_size = 2048
+
             while (self.is_streaming and 
                    not self._stop_event.is_set() and
                    self.stream_process and 
@@ -499,316 +758,24 @@ class RealtimeAudioStreamer:
                 try:
                     audio_data = self.stream_process.stdout.read(chunk_size)
                     if not audio_data:
+                        time.sleep(0.1)
                         continue
                     
                     self.audio_queue.put(audio_data)
                     self.bytes_transmitted += len(audio_data)
                     self.last_activity_time = datetime.datetime.now()
-                    
-                    if self.bytes_transmitted % (10 * 1024) < chunk_size:
-                        kb_transmitted = self.bytes_transmitted / 1024
-                        print(f"📊 Audio captured: {kb_transmitted:.2f} KB")
+
+                    if self.bytes_transmitted % (100 * 1024) < chunk_size:
+                        print(f"📊 Audio captured: {self.bytes_transmitted / 1024:.2f} KB")
                         
                 except Exception as e:
                     print(f"Error reading audio data: {e}")
                     break
 
         except Exception as e:
-            print(f"Audio capture error: {e}")
+            print(f"Audio capture error (localhost): {e}")
         finally:
             self._cleanup_audio_capture()
-
-    def _capture_audio_production(self):
-        """Capture audio for production environment using virtual speaker monitor"""
-        print("🐳 Using production audio capture method with virtual speaker monitor")
-        
-        # Set up virtual audio environment
-        self._setup_virtual_audio()
-        
-        # CRITICAL FIX: Use the virtual speaker monitor
-        # List available devices first
-        try:
-            result = subprocess.run(
-                ["pactl", "list", "short", "sources"],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            print(f"Available audio sources:\n{result.stdout}")
-        except Exception as e:
-            print(f"Could not list audio sources: {e}")
-
-        # Try to find the virtual speaker monitor
-        audio_source = "virtual_speaker.monitor"  # This is the monitor of our null sink
-        
-        # Use parec with better audio settings
-        parec_command = [
-            "parec",
-            "--format=s16le",
-            "--rate=16000",
-            "--channels=1",
-            "--device=" + audio_source,
-            "--latency-msec=50"  # Reduce latency
-        ]
-        
-        # Add noise reduction and normalization with sox
-        sox_command = [
-            "sox",
-            "-q",
-            "-t", "raw",
-            "-r", "16000",
-            "-c", "1",
-            "-b", "16",
-            "-e", "signed-integer",
-            "-",                     # Read from stdin
-            "-t", "raw", "-",       # Output to stdout
-            "highpass", "80",       # High-pass filter to remove low-frequency noise
-            "norm", "-3",           # Normalize audio to -3dB
-            "compand", "0.3,1,6:-70,-60,-20,-5,0",  # Dynamic range compression
-        ]
-
-        print(f"Parec command: {' '.join(parec_command)}")
-        print(f"Sox command: {' '.join(sox_command)}")
-
-        try:
-            # Start parec to capture from PulseAudio
-            parec_process = subprocess.Popen(
-                parec_command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                bufsize=4096
-            )
-            
-            # Pipe parec output through sox
-            sox_process = subprocess.Popen(
-                sox_command,
-                stdin=parec_process.stdout,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                bufsize=4096
-            )
-            
-            # Allow parec_process to receive a SIGPIPE if sox_process exits
-            parec_process.stdout.close()
-            
-            self.stream_process = sox_process
-            self.parec_process = parec_process  # Keep reference to clean up later
-
-            print(f"Started audio capture (Sox PID: {sox_process.pid}, Parec PID: {parec_process.pid})")
-
-            chunk_size = 2048  
-            empty_chunks = 0
-            max_empty_chunks = 100  # Allow some empty chunks but not too many
-            last_non_empty_time = time.time()
-            
-            # Save a sample of audio for debugging
-            debug_file = open("/tmp/audio_debug.raw", "wb")
-            chunks_saved = 0
-            max_chunks_to_save = 1000  # Save more chunks for debugging
-            
-            while (self.is_streaming and 
-                not self._stop_event.is_set() and
-                self.stream_process and 
-                self.stream_process.poll() is None):
-                
-                try:
-                    audio_data = self.stream_process.stdout.read(chunk_size)
-                    if not audio_data:
-                        continue
-                    
-                    # Check if this is empty/silent audio
-                    is_empty = all(b == 0 for b in audio_data)
-                    
-                    if is_empty:
-                        empty_chunks += 1
-                        if empty_chunks % 50 == 0:  # Log every 50 empty chunks
-                            print(f"🔇 Detected {empty_chunks} empty chunks")
-                        
-                        # If we've had too many empty chunks, try to restart audio
-                        if empty_chunks > max_empty_chunks:
-                            time_since_last_non_empty = time.time() - last_non_empty_time
-                            if time_since_last_non_empty > 30:  # 30 seconds of silence
-                                print("⚠️ Too much silence detected, checking audio setup")
-                                self._check_and_fix_audio_setup()
-                                empty_chunks = 0
-                                last_non_empty_time = time.time()
-                    else:
-                        empty_chunks = 0
-                        last_non_empty_time = time.time()
-                        
-                        # Calculate audio level
-                        audio_level = self._calculate_audio_level(audio_data)
-                        if audio_level > 0.01:  # Only log if audio level is significant
-                            print(f"🔊 Non-empty audio detected ({len(audio_data)} bytes, level: {audio_level:.2f})")
-                        
-                        # Save first chunks for debugging
-                        if chunks_saved < max_chunks_to_save:
-                            debug_file.write(audio_data)
-                            chunks_saved += 1
-                            if chunks_saved == max_chunks_to_save:
-                                debug_file.close()
-                                print(f"Saved {chunks_saved} audio chunks to /tmp/audio_debug.raw for debugging")
-                    
-                    self.audio_queue.put(audio_data)
-                    self.bytes_transmitted += len(audio_data)
-                    self.last_activity_time = datetime.datetime.now()
-                    
-                    if self.bytes_transmitted % (100 * 1024) < chunk_size:  # Every 100KB
-                        kb_transmitted = self.bytes_transmitted / 1024
-                        print(f"📊 Audio captured: {kb_transmitted:.2f} KB")
-                        
-                except Exception as e:
-                    print(f"Error reading audio data: {e}")
-                    break
-
-        except Exception as e:
-            print(f"Audio capture error: {e}")
-        finally:
-            if chunks_saved < max_chunks_to_save:
-                debug_file.close()
-            self._cleanup_audio_capture()
-
-    def _calculate_audio_level(self, audio_data):
-        """Calculate the audio level (RMS) of the audio data"""
-        try:
-            # Convert bytes to signed 16-bit integers
-            import struct
-            samples = struct.unpack('<' + 'h' * (len(audio_data) // 2), audio_data)
-            
-            # Calculate RMS (root mean square)
-            sum_squares = sum(sample ** 2 for sample in samples)
-            if len(samples) > 0:
-                rms = (sum_squares / len(samples)) ** 0.5
-                # Normalize to 0-1 range
-                return min(rms / 32768, 1.0)
-            return 0
-        except:
-            return 0
-        
-    def _setup_virtual_audio(self):
-        """Set up virtual audio environment for production"""
-        try:
-            # Ensure PulseAudio is running
-            subprocess.run(["pulseaudio", "--check"], check=True)
-            print("PulseAudio is running")
-        except subprocess.CalledProcessError:
-            print("Starting PulseAudio...")
-            subprocess.run(["pulseaudio", "--start"], check=False)
-            sleep(3)
-        
-        try:
-            # Create virtual sink if it doesn't exist
-            result = subprocess.run(
-                ["pactl", "list", "sinks", "short"], 
-                capture_output=True, 
-                text=True
-            )
-            
-            virtual_sink_exists = any("virtual_speaker" in line for line in result.stdout.split('\n'))
-            
-            if not virtual_sink_exists:
-                print("Creating virtual audio sink...")
-                subprocess.run(["pactl", "load-module", "module-null-sink", "sink_name=virtual_speaker", "sink_properties=device.description='Virtual_Speaker'"], check=True)
-                subprocess.run(["pactl", "load-module", "module-loopback", "source=virtual_speaker.monitor"], check=True)
-                print("Virtual audio sink created")
-            else:
-                print("Virtual audio sink already exists")
-                
-            # Set the virtual speaker as the default sink (where audio plays)
-            subprocess.run(["pactl", "set-default-sink", "virtual_speaker"], check=False)
-            print("Virtual speaker configured as default audio output")
-            print("Sox will capture from: virtual_speaker.monitor")
-                
-        except Exception as e:
-            print(f"Error setting up virtual audio: {e}")
-
-
-    # def _setup_virtual_audio(self):
-    #     """Verify the virtual audio environment is set up correctly."""
-    #     print("Verifying virtual audio setup...")
-        
-    #     try:
-    #         # Check if the virtual sink exists
-    #         result = subprocess.run(
-    #             ["pactl", "list", "sinks", "short"], 
-    #             capture_output=True, 
-    #             text=True
-    #         )
-            
-    #         if "virtual_speaker" not in result.stdout:
-    #             print("ERROR: Virtual sink 'virtual_speaker' not found. Entry point script may have failed.")
-    #             return
-                
-    #         print("Virtual sink 'virtual_speaker' verified.")
-            
-    #         # Ensure the virtual speaker is the default sink
-    #         subprocess.run(["pactl", "set-default-sink", "virtual_speaker"], check=False)
-    #         print("Ensured 'virtual_speaker' is the default audio output.")
-            
-    #         # List available sources for debugging
-    #         result = subprocess.run(
-    #             ["pactl", "list", "short", "sources"],
-    #             capture_output=True,
-    #             text=True,
-    #             check=True
-    #         )
-    #         print(f"Available audio sources after setup:\n{result.stdout}")
-                    
-    #     except Exception as e:
-    #         print(f"Error during virtual audio verification: {e}")
-
-    def _check_and_fix_audio_setup(self):
-        """Check and potentially fix audio setup"""
-        try:
-            print("Checking audio setup...")
-            
-            # Check if Chrome is producing audio
-            result = subprocess.run(
-                ["pactl", "list", "sink-inputs"], 
-                capture_output=True, 
-                text=True
-            )
-            
-            if "chrome" in result.stdout.lower():
-                print("Chrome is producing audio")
-            else:
-                print("Chrome doesn't appear to be producing audio")
-                
-                # Try to redirect Chrome's audio to our virtual sink
-                try:
-                    chrome_sink_inputs = []
-                    for line in result.stdout.split('\n'):
-                        if "chrome" in line.lower():
-                            parts = line.split('\t')
-                            if len(parts) > 0:
-                                sink_input = parts[0].split('#')[1] if '#' in parts[0] else parts[0]
-                                chrome_sink_inputs.append(sink_input)
-                    
-                    for sink_input in chrome_sink_inputs:
-                        subprocess.run(
-                            ["pactl", "move-sink-input", sink_input, "virtual_speaker"], 
-                            check=False
-                        )
-                        print(f"Redirected Chrome audio input {sink_input} to virtual sink")
-                except Exception as e:
-                    print(f"Error redirecting Chrome audio: {e}")
-            
-            # Check our virtual sink
-            result = subprocess.run(
-                ["pactl", "list", "sinks"], 
-                capture_output=True, 
-                text=True
-            )
-            
-            if "virtual_speaker" in result.stdout:
-                print("Virtual sink is active")
-            else:
-                print("Virtual sink is not active, recreating...")
-                self._setup_virtual_audio()
-                
-        except Exception as e:
-            print(f"Error checking audio setup: {e}")
-
 
     def _run_websocket_sender(self):
         """Run WebSocket sender in a separate event loop"""
@@ -888,38 +855,8 @@ class RealtimeAudioStreamer:
         else:
             return False
 
-    # def _cleanup_audio_capture(self):
-    #     """Clean up audio capture resources"""
-    #     if self.stream_process:
-    #         print(f"Stopping audio process (PID: {self.stream_process.pid})...")
-    #         try:
-    #             self.stream_process.terminate()
-    #             try:
-    #                 self.stream_process.wait(timeout=5)
-    #             except subprocess.TimeoutExpired:
-    #                 self.stream_process.kill()
-    #                 self.stream_process.wait()
-    #         except Exception as e:
-    #             print(f"Error stopping audio process: {e}")
-    #         finally:
-    #             self.stream_process = None
-
     def _cleanup_audio_capture(self):
         """Clean up audio capture resources"""
-        if hasattr(self, 'parec_process') and self.parec_process:
-            print(f"Stopping parec process (PID: {self.parec_process.pid})...")
-            try:
-                self.parec_process.terminate()
-                try:
-                    self.parec_process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    self.parec_process.kill()
-                    self.parec_process.wait()
-            except Exception as e:
-                print(f"Error stopping parec process: {e}")
-            finally:
-                self.parec_process = None
-                
         if self.stream_process:
             print(f"Stopping audio process (PID: {self.stream_process.pid})...")
             try:
@@ -974,6 +911,7 @@ class RealtimeAudioStreamer:
             'queue_size': self.audio_queue.qsize(),
             'reconnect_attempts': self.reconnect_attempts
         }
+    
     
 def make_request(url, headers, method="GET", data=None, files=None):
     if method == "POST":
@@ -1102,7 +1040,7 @@ async def join_meet():
         options.add_argument("--disable-backgrounding-occluded-windows")
         options.add_argument("--disable-features=AudioServiceOutOfProcess")
         options.add_argument("--remote-debugging-port=9222")
-
+        options.add_argument("--autoplay-policy=no-user-gesture-required") 
         options.add_argument("--no-first-run")
         options.add_argument("--no-default-browser-check")
         options.add_argument("--disable-default-apps")
@@ -1111,14 +1049,6 @@ async def join_meet():
         options.add_argument("--disable-password-generation")
         options.add_argument("--disable-translate")
         options.add_argument("--disable-features=AutofillServerCommunication")
-        options.add_argument("--autoplay-policy=no-user-gesture-required")
-        
-        # log_path = "chromedriver.log"
-        
-        #  Add audio routing options for production
-        if os.getenv('RENDER_SERVICE_ID') or os.getenv('RENDER_EXTERNAL_URL'):
-            print("Adding production audio routing options")
-            options.add_argument("--alsa-output-device=virtual_speaker")
         
         log_path = "chromedriver.log"
         
