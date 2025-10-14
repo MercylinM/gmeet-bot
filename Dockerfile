@@ -4,7 +4,7 @@ RUN mkdir /app /app/recordings /app/screenshots
 
 WORKDIR /app
 
-# Install system dependencies including sox and pulseaudio-utils
+# Install system dependencies including portaudio and audio libraries
 RUN apt-get update && \
     apt-get install -y \
     python3 \
@@ -17,7 +17,10 @@ RUN apt-get update && \
     xvfb \
     libnss3-tools \
     ffmpeg \
-    sox \
+    portaudio19-dev \
+    libasound2-dev \
+    libjack-dev \
+    libpulse-dev \
     xdotool \
     unzip \
     x11vnc \
@@ -48,32 +51,27 @@ ENV SCREEN_RESOLUTION=1280x1024
 ENV COLOR_DEPTH=24
 ENV DISPLAY=:${X_SERVER_NUM}.0
 
+# Audio environment variables for sounddevice
+ENV SOUNDDEVICE_IGNORE_ALSA_CONFIG=1
+ENV PULSE_RUNTIME_PATH=/run/pulse
+ENV PULSE_SERVER=unix:/run/pulse/native
+
 # D-Bus setup
 RUN mkdir -p /run/dbus && \
     chmod 755 /run/dbus && \
     mkdir -p /var/run/dbus && \
     dbus-uuidgen > /var/lib/dbus/machine-id
 
+# Create pulseaudio runtime directory
+RUN mkdir -p /run/pulse && \
+    chmod 755 /run/pulse
+
 # Clean up pulse directories
 RUN rm -rf /var/run/pulse /var/lib/pulse /root/.config/pulse
 
-# Install PortAudio
-RUN wget http://files.portaudio.com/archives/pa_stable_v190700_20210406.tgz && \
-    tar -xvf pa_stable_v190700_20210406.tgz && \
-    mv portaudio /usr/src/ && \
-    rm pa_stable_v190700_20210406.tgz
-
-WORKDIR /usr/src/portaudio
-RUN ./configure && \
-    make && \
-    make install && \
-    ldconfig
-
-WORKDIR /app
-
 # Copy requirements first for better caching
 COPY requirements.txt /app/
-RUN pip3 install --no-cache-dir -r requirements.txt gunicorn
+RUN pip3 install --no-cache-dir -r requirements.txt gunicorn sounddevice numpy
 
 # Copy application files
 COPY . /app

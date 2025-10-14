@@ -34,9 +34,13 @@ echo "Xvfb started successfully on display :99"
 # Set display for all applications
 export DISPLAY=:99
 
+# Create pulseaudio runtime directory
+mkdir -p /run/pulse
+chmod 755 /run/pulse
+
 # Start pulseaudio in system mode (since running as root)
 echo "Starting PulseAudio in system mode..."
-pulseaudio --system --daemonize --log-level=4 --disallow-exit --disallow-module-loading=false
+pulseaudio --system --daemonize --log-level=4 --disallow-exit --disallow-module-loading=false --exit-idle-time=-1
 
 # Wait for pulseaudio to initialize
 sleep 3
@@ -44,27 +48,50 @@ sleep 3
 # Verify pulseaudio is running
 if pulseaudio --check 2>/dev/null || pgrep -x pulseaudio > /dev/null; then
     echo "PulseAudio started successfully"
-    # Create a null sink for virtual audio
-    pactl load-module module-null-sink sink_name=virtual_speaker sink_properties=device.description="Virtual_Speaker" 2>/dev/null || echo "Could not create virtual sink"
-
-    # pactl load-module module-null-sink sink_name=virtual_speaker sink_properties=device.description="Virtual_Speaker" rate=16000 channels=1 2>/dev/null || echo "Could not create virtual sink"
-
+    
+    # Create virtual audio devices for sounddevice
+    echo "Setting up virtual audio devices..."
+    
+    # Create a null sink for virtual output
+    pactl load-module module-null-sink sink_name=virtual_speaker sink_properties=device.description="Virtual_Speaker" 2>/dev/null || echo "Virtual speaker already exists or could not be created"
+    
+    # Create a loopback to capture from virtual speaker
+    pactl load-module module-loopback source=virtual_speaker.monitor sink=virtual_speaker 2>/dev/null || echo "Loopback already exists or could not be created"
+    
+    # Set virtual speaker as default
     pactl set-default-sink virtual_speaker 2>/dev/null || echo "Could not set default sink to virtual_speaker"
-
-    echo "Virtual speaker configured as default audio output"
-    echo "Sox will capture from: virtual_speaker.monitor"
+    
+    echo "Virtual audio devices configured"
 else
     echo "WARNING: PulseAudio may not be running properly"
     ps aux | grep pulse
     echo "Attempting to continue without PulseAudio..."
 fi
 
-# List available audio devices 
+# List available audio devices for debugging
 echo "Available audio devices:"
 pactl list short sources 2>/dev/null || echo "Could not list audio sources"
 
+echo "Available audio sinks:"
+pactl list short sinks 2>/dev/null || echo "Could not list audio sinks"
+
+# Test sounddevice availability
+echo "Testing sounddevice Python library..."
+python3 -c "
+import sounddevice as sd
+print('SoundDevice version:', sd.__version__)
+print('Default input device:', sd.default.device[0] if hasattr(sd.default, 'device') else sd.default.device)
+print('Available devices:')
+devices = sd.query_devices()
+for i, dev in enumerate(devices):
+    if dev['max_input_channels'] > 0:
+        print(f'  Input {i}: {dev[\\\"name\\\"]} ({dev[\\\"max_input_channels\\\"]} channels)')
+    if dev['max_output_channels'] > 0:
+        print(f'  Output {i}: {dev[\\\"name\\\"]} ({dev[\\\"max_output_channels\\\"]} channels)')
+"
+
 # Run the Flask server (bot will wait for HTTP trigger)
-echo "Starting Google Meet Bot HTTP server..."
+echo "Starting Google Meet Bot HTTP server with sounddevice audio backend..."
 python3 gmeet.py --server --production
 
 # Capture exit code
