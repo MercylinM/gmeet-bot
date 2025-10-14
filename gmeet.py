@@ -520,7 +520,7 @@ class RealtimeAudioStreamer:
 
     def _capture_audio_production(self):
         """Capture audio for production environment using virtual speaker monitor"""
-        print("Using production audio capture method with virtual speaker monitor")
+        print("🐳 Using production audio capture method with virtual speaker monitor")
         
         # Set up virtual audio environment
         self._setup_virtual_audio()
@@ -541,16 +541,17 @@ class RealtimeAudioStreamer:
         # Try to find the virtual speaker monitor
         audio_source = "virtual_speaker.monitor"  # This is the monitor of our null sink
         
-        # Use parec + sox pipeline to capture from PulseAudio
+        # Use parec with better audio settings
         parec_command = [
             "parec",
             "--format=s16le",
             "--rate=16000",
             "--channels=1",
             "--device=" + audio_source,
-            "--latency-msec=50"  
+            "--latency-msec=50"  # Reduce latency
         ]
         
+        # Add noise reduction and normalization with sox
         sox_command = [
             "sox",
             "-q",
@@ -600,10 +601,15 @@ class RealtimeAudioStreamer:
             max_empty_chunks = 100  # Allow some empty chunks but not too many
             last_non_empty_time = time.time()
             
+            # Save a sample of audio for debugging
+            debug_file = open("/tmp/audio_debug.raw", "wb")
+            chunks_saved = 0
+            max_chunks_to_save = 1000  # Save more chunks for debugging
+            
             while (self.is_streaming and 
-                   not self._stop_event.is_set() and
-                   self.stream_process and 
-                   self.stream_process.poll() is None):
+                not self._stop_event.is_set() and
+                self.stream_process and 
+                self.stream_process.poll() is None):
                 
                 try:
                     audio_data = self.stream_process.stdout.read(chunk_size)
@@ -616,26 +622,38 @@ class RealtimeAudioStreamer:
                     if is_empty:
                         empty_chunks += 1
                         if empty_chunks % 50 == 0:  # Log every 50 empty chunks
-                            print(f"Detected {empty_chunks} empty chunks")
+                            print(f"🔇 Detected {empty_chunks} empty chunks")
                         
                         # If we've had too many empty chunks, try to restart audio
                         if empty_chunks > max_empty_chunks:
                             time_since_last_non_empty = time.time() - last_non_empty_time
                             if time_since_last_non_empty > 30:  # 30 seconds of silence
-                                print("Too much silence detected, checking audio setup")
+                                print("⚠️ Too much silence detected, checking audio setup")
                                 self._check_and_fix_audio_setup()
                                 empty_chunks = 0
                                 last_non_empty_time = time.time()
                     else:
                         empty_chunks = 0
                         last_non_empty_time = time.time()
-                        print(f"Non-empty audio detected ({len(audio_data)} bytes)")
+                        
+                        # Calculate audio level
+                        audio_level = self._calculate_audio_level(audio_data)
+                        if audio_level > 0.01:  # Only log if audio level is significant
+                            print(f"🔊 Non-empty audio detected ({len(audio_data)} bytes, level: {audio_level:.2f})")
+                        
+                        # Save first chunks for debugging
+                        if chunks_saved < max_chunks_to_save:
+                            debug_file.write(audio_data)
+                            chunks_saved += 1
+                            if chunks_saved == max_chunks_to_save:
+                                debug_file.close()
+                                print(f"Saved {chunks_saved} audio chunks to /tmp/audio_debug.raw for debugging")
                     
                     self.audio_queue.put(audio_data)
                     self.bytes_transmitted += len(audio_data)
                     self.last_activity_time = datetime.datetime.now()
                     
-                    if self.bytes_transmitted % (10 * 1024) < chunk_size:
+                    if self.bytes_transmitted % (100 * 1024) < chunk_size:  # Every 100KB
                         kb_transmitted = self.bytes_transmitted / 1024
                         print(f"📊 Audio captured: {kb_transmitted:.2f} KB")
                         
@@ -646,80 +664,98 @@ class RealtimeAudioStreamer:
         except Exception as e:
             print(f"Audio capture error: {e}")
         finally:
+            if chunks_saved < max_chunks_to_save:
+                debug_file.close()
             self._cleanup_audio_capture()
 
-    # def _setup_virtual_audio(self):
-    #     """Set up virtual audio environment for production"""
-    #     try:
-    #         # Ensure PulseAudio is running
-    #         subprocess.run(["pulseaudio", "--check"], check=True)
-    #         print("PulseAudio is running")
-    #     except subprocess.CalledProcessError:
-    #         print("Starting PulseAudio...")
-    #         subprocess.run(["pulseaudio", "--start"], check=False)
-    #         sleep(3)
+    def _calculate_audio_level(self, audio_data):
+        """Calculate the audio level (RMS) of the audio data"""
+        try:
+            # Convert bytes to signed 16-bit integers
+            import struct
+            samples = struct.unpack('<' + 'h' * (len(audio_data) // 2), audio_data)
+            
+            # Calculate RMS (root mean square)
+            sum_squares = sum(sample ** 2 for sample in samples)
+            if len(samples) > 0:
+                rms = (sum_squares / len(samples)) ** 0.5
+                # Normalize to 0-1 range
+                return min(rms / 32768, 1.0)
+            return 0
+        except:
+            return 0
         
-    #     try:
-    #         # Create virtual sink if it doesn't exist
-    #         result = subprocess.run(
-    #             ["pactl", "list", "sinks", "short"], 
-    #             capture_output=True, 
-    #             text=True
-    #         )
-            
-    #         virtual_sink_exists = any("virtual_speaker" in line for line in result.stdout.split('\n'))
-            
-    #         if not virtual_sink_exists:
-    #             print("Creating virtual audio sink...")
-    #             subprocess.run(["pactl", "load-module", "module-null-sink", "sink_name=virtual_speaker", "sink_properties=device.description='Virtual_Speaker'"], check=True)
-    #             subprocess.run(["pactl", "load-module", "module-loopback", "source=virtual_speaker.monitor"], check=True)
-    #             print("Virtual audio sink created")
-    #         else:
-    #             print("Virtual audio sink already exists")
-                
-    #         # Set the virtual speaker as the default sink (where audio plays)
-    #         subprocess.run(["pactl", "set-default-sink", "virtual_speaker"], check=False)
-    #         print("Virtual speaker configured as default audio output")
-    #         print("Sox will capture from: virtual_speaker.monitor")
-                
-    #     except Exception as e:
-    #         print(f"Error setting up virtual audio: {e}")
-
-    # In gmeet.py, inside the RealtimeAudioStreamer class
-
     def _setup_virtual_audio(self):
-        """Verify the virtual audio environment is set up correctly."""
-        print("Verifying virtual audio setup...")
+        """Set up virtual audio environment for production"""
+        try:
+            # Ensure PulseAudio is running
+            subprocess.run(["pulseaudio", "--check"], check=True)
+            print("PulseAudio is running")
+        except subprocess.CalledProcessError:
+            print("Starting PulseAudio...")
+            subprocess.run(["pulseaudio", "--start"], check=False)
+            sleep(3)
         
         try:
-            # Check if the virtual sink exists
+            # Create virtual sink if it doesn't exist
             result = subprocess.run(
                 ["pactl", "list", "sinks", "short"], 
                 capture_output=True, 
                 text=True
             )
             
-            if "virtual_speaker" not in result.stdout:
-                print("ERROR: Virtual sink 'virtual_speaker' not found. Entry point script may have failed.")
-                return
+            virtual_sink_exists = any("virtual_speaker" in line for line in result.stdout.split('\n'))
+            
+            if not virtual_sink_exists:
+                print("Creating virtual audio sink...")
+                subprocess.run(["pactl", "load-module", "module-null-sink", "sink_name=virtual_speaker", "sink_properties=device.description='Virtual_Speaker'"], check=True)
+                subprocess.run(["pactl", "load-module", "module-loopback", "source=virtual_speaker.monitor"], check=True)
+                print("Virtual audio sink created")
+            else:
+                print("Virtual audio sink already exists")
                 
-            print("Virtual sink 'virtual_speaker' verified.")
-            
-            # Ensure the virtual speaker is the default sink
+            # Set the virtual speaker as the default sink (where audio plays)
             subprocess.run(["pactl", "set-default-sink", "virtual_speaker"], check=False)
-            print("Ensured 'virtual_speaker' is the default audio output.")
-            
-            # List available sources for debugging
-            result = subprocess.run(
-                ["pactl", "list", "short", "sources"],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            print(f"Available audio sources after setup:\n{result.stdout}")
-                    
+            print("Virtual speaker configured as default audio output")
+            print("Sox will capture from: virtual_speaker.monitor")
+                
         except Exception as e:
-            print(f"Error during virtual audio verification: {e}")
+            print(f"Error setting up virtual audio: {e}")
+
+
+    # def _setup_virtual_audio(self):
+    #     """Verify the virtual audio environment is set up correctly."""
+    #     print("Verifying virtual audio setup...")
+        
+    #     try:
+    #         # Check if the virtual sink exists
+    #         result = subprocess.run(
+    #             ["pactl", "list", "sinks", "short"], 
+    #             capture_output=True, 
+    #             text=True
+    #         )
+            
+    #         if "virtual_speaker" not in result.stdout:
+    #             print("ERROR: Virtual sink 'virtual_speaker' not found. Entry point script may have failed.")
+    #             return
+                
+    #         print("Virtual sink 'virtual_speaker' verified.")
+            
+    #         # Ensure the virtual speaker is the default sink
+    #         subprocess.run(["pactl", "set-default-sink", "virtual_speaker"], check=False)
+    #         print("Ensured 'virtual_speaker' is the default audio output.")
+            
+    #         # List available sources for debugging
+    #         result = subprocess.run(
+    #             ["pactl", "list", "short", "sources"],
+    #             capture_output=True,
+    #             text=True,
+    #             check=True
+    #         )
+    #         print(f"Available audio sources after setup:\n{result.stdout}")
+                    
+    #     except Exception as e:
+    #         print(f"Error during virtual audio verification: {e}")
 
     def _check_and_fix_audio_setup(self):
         """Check and potentially fix audio setup"""
@@ -1079,10 +1115,10 @@ async def join_meet():
         
         # log_path = "chromedriver.log"
         
-         # Add audio routing options for production
-        # if os.getenv('RENDER_SERVICE_ID') or os.getenv('RENDER_EXTERNAL_URL'):
-        #     print("Adding production audio routing options")
-        #     options.add_argument("--alsa-output-device=virtual_speaker")
+        #  Add audio routing options for production
+        if os.getenv('RENDER_SERVICE_ID') or os.getenv('RENDER_EXTERNAL_URL'):
+            print("Adding production audio routing options")
+            options.add_argument("--alsa-output-device=virtual_speaker")
         
         log_path = "chromedriver.log"
         
