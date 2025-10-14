@@ -547,7 +547,8 @@ class RealtimeAudioStreamer:
             "--format=s16le",
             "--rate=16000",
             "--channels=1",
-            "--device=" + audio_source
+            "--device=" + audio_source,
+            "--latency-msec=50"  
         ]
         
         sox_command = [
@@ -560,6 +561,9 @@ class RealtimeAudioStreamer:
             "-e", "signed-integer",
             "-",                     # Read from stdin
             "-t", "raw", "-",       # Output to stdout
+            "highpass", "80",       # High-pass filter to remove low-frequency noise
+            "norm", "-3",           # Normalize audio to -3dB
+            "compand", "0.3,1,6:-70,-60,-20,-5,0",  # Dynamic range compression
         ]
 
         print(f"Parec command: {' '.join(parec_command)}")
@@ -644,42 +648,78 @@ class RealtimeAudioStreamer:
         finally:
             self._cleanup_audio_capture()
 
+    # def _setup_virtual_audio(self):
+    #     """Set up virtual audio environment for production"""
+    #     try:
+    #         # Ensure PulseAudio is running
+    #         subprocess.run(["pulseaudio", "--check"], check=True)
+    #         print("PulseAudio is running")
+    #     except subprocess.CalledProcessError:
+    #         print("Starting PulseAudio...")
+    #         subprocess.run(["pulseaudio", "--start"], check=False)
+    #         sleep(3)
+        
+    #     try:
+    #         # Create virtual sink if it doesn't exist
+    #         result = subprocess.run(
+    #             ["pactl", "list", "sinks", "short"], 
+    #             capture_output=True, 
+    #             text=True
+    #         )
+            
+    #         virtual_sink_exists = any("virtual_speaker" in line for line in result.stdout.split('\n'))
+            
+    #         if not virtual_sink_exists:
+    #             print("Creating virtual audio sink...")
+    #             subprocess.run(["pactl", "load-module", "module-null-sink", "sink_name=virtual_speaker", "sink_properties=device.description='Virtual_Speaker'"], check=True)
+    #             subprocess.run(["pactl", "load-module", "module-loopback", "source=virtual_speaker.monitor"], check=True)
+    #             print("Virtual audio sink created")
+    #         else:
+    #             print("Virtual audio sink already exists")
+                
+    #         # Set the virtual speaker as the default sink (where audio plays)
+    #         subprocess.run(["pactl", "set-default-sink", "virtual_speaker"], check=False)
+    #         print("Virtual speaker configured as default audio output")
+    #         print("Sox will capture from: virtual_speaker.monitor")
+                
+    #     except Exception as e:
+    #         print(f"Error setting up virtual audio: {e}")
+
+    # In gmeet.py, inside the RealtimeAudioStreamer class
+
     def _setup_virtual_audio(self):
-        """Set up virtual audio environment for production"""
-        try:
-            # Ensure PulseAudio is running
-            subprocess.run(["pulseaudio", "--check"], check=True)
-            print("PulseAudio is running")
-        except subprocess.CalledProcessError:
-            print("Starting PulseAudio...")
-            subprocess.run(["pulseaudio", "--start"], check=False)
-            sleep(3)
+        """Verify the virtual audio environment is set up correctly."""
+        print("Verifying virtual audio setup...")
         
         try:
-            # Create virtual sink if it doesn't exist
+            # Check if the virtual sink exists
             result = subprocess.run(
                 ["pactl", "list", "sinks", "short"], 
                 capture_output=True, 
                 text=True
             )
             
-            virtual_sink_exists = any("virtual_speaker" in line for line in result.stdout.split('\n'))
+            if "virtual_speaker" not in result.stdout:
+                print("ERROR: Virtual sink 'virtual_speaker' not found. Entry point script may have failed.")
+                return
+                
+            print("Virtual sink 'virtual_speaker' verified.")
             
-            if not virtual_sink_exists:
-                print("Creating virtual audio sink...")
-                subprocess.run(["pactl", "load-module", "module-null-sink", "sink_name=virtual_speaker", "sink_properties=device.description='Virtual_Speaker'"], check=True)
-                subprocess.run(["pactl", "load-module", "module-loopback", "source=virtual_speaker.monitor"], check=True)
-                print("Virtual audio sink created")
-            else:
-                print("Virtual audio sink already exists")
-                
-            # Set the virtual speaker as the default sink (where audio plays)
+            # Ensure the virtual speaker is the default sink
             subprocess.run(["pactl", "set-default-sink", "virtual_speaker"], check=False)
-            print("Virtual speaker configured as default audio output")
-            print("Sox will capture from: virtual_speaker.monitor")
-                
+            print("Ensured 'virtual_speaker' is the default audio output.")
+            
+            # List available sources for debugging
+            result = subprocess.run(
+                ["pactl", "list", "short", "sources"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            print(f"Available audio sources after setup:\n{result.stdout}")
+                    
         except Exception as e:
-            print(f"Error setting up virtual audio: {e}")
+            print(f"Error during virtual audio verification: {e}")
 
     def _check_and_fix_audio_setup(self):
         """Check and potentially fix audio setup"""
@@ -1040,9 +1080,9 @@ async def join_meet():
         # log_path = "chromedriver.log"
         
          # Add audio routing options for production
-        if os.getenv('RENDER_SERVICE_ID') or os.getenv('RENDER_EXTERNAL_URL'):
-            print("Adding production audio routing options")
-            options.add_argument("--alsa-output-device=virtual_speaker")
+        # if os.getenv('RENDER_SERVICE_ID') or os.getenv('RENDER_EXTERNAL_URL'):
+        #     print("Adding production audio routing options")
+        #     options.add_argument("--alsa-output-device=virtual_speaker")
         
         log_path = "chromedriver.log"
         

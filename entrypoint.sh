@@ -45,7 +45,9 @@ sleep 3
 if pulseaudio --check 2>/dev/null || pgrep -x pulseaudio > /dev/null; then
     echo "PulseAudio started successfully"
     # Create a null sink for virtual audio
-    pactl load-module module-null-sink sink_name=virtual_speaker sink_properties=device.description="Virtual_Speaker" 2>/dev/null || echo "Could not create virtual sink"
+    # pactl load-module module-null-sink sink_name=virtual_speaker sink_properties=device.description="Virtual_Speaker" 2>/dev/null || echo "Could not create virtual sink"
+
+    pactl load-module module-null-sink sink_name=virtual_speaker sink_properties=device.description="Virtual_Speaker" rate=16000 channels=1 2>/dev/null || echo "Could not create virtual sink"
 
     pactl set-default-sink virtual_speaker 2>/dev/null || echo "Could not set default sink to virtual_speaker"
 
