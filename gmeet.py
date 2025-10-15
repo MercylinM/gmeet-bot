@@ -650,21 +650,60 @@ def index():
 
 # Browser automation functions - USING YOUR PROVEN METHODS
 async def google_sign_in(email, password, driver):
-    driver.get("https://accounts.google.com")
-    sleep(1)
+    print("🔐 Starting Google sign in process")
     
-    email_field = driver.find_element(By.NAME, "identifier")
-    email_field.send_keys(email)
-    sleep(2)
-    
-    driver.find_element(By.ID, "identifierNext").click()
-    sleep(3)
-    
-    password_field = driver.find_element(By.NAME, "Passwd")
-    password_field.click()
-    password_field.send_keys(password)
-    password_field.send_keys(Keys.RETURN)
-    sleep(5)
+    try:
+        # Navigate to Google sign in page
+        print("🔗 Navigating to Google sign in page")
+        driver.get("https://accounts.google.com")
+        
+        # Wait for page to load
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.NAME, "identifier"))
+        )
+        
+        # Enter email
+        print("📧 Entering email")
+        email_field = driver.find_element(By.NAME, "identifier")
+        email_field.clear()
+        email_field.send_keys(email)
+        
+        # Click next
+        print("➡️ Clicking next button")
+        driver.find_element(By.ID, "identifierNext").click()
+        
+        # Wait for password field
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.NAME, "Passwd"))
+        )
+        
+        # Enter password
+        print("🔑 Entering password")
+        password_field = driver.find_element(By.NAME, "Passwd")
+        password_field.clear()
+        password_field.send_keys(password)
+        password_field.send_keys(Keys.RETURN)
+        
+        # Wait for sign in to complete
+        print("⏳ Waiting for sign in to complete")
+        WebDriverWait(driver, 15).until(
+            lambda driver: driver.current_url and "accounts.google.com" not in driver.current_url
+        )
+        
+        print("✅ Google sign in completed successfully")
+        
+    except TimeoutException as e:
+        print(f"❌ Timeout during Google sign in: {e}")
+        # Take screenshot for debugging
+        try:
+            driver.save_screenshot("screenshots/signin_error.png")
+            print("📸 Saved screenshot to screenshots/signin_error.png")
+        except:
+            pass
+        raise e
+    except Exception as e:
+        print(f"❌ Error during Google sign in: {e}")
+        raise e
 
 def get_chrome_version():
     """Try to detect the installed Chrome version"""
@@ -700,406 +739,441 @@ def cleanup_chrome_processes():
         print(f"Error cleaning up Chrome processes: {e}")
 
 async def join_meet():
+    print("🔧 Step 1: Starting join_meet function")
     bot_state['status'] = 'running'
 
-    cleanup_chrome_processes()
-
-    meet_link = os.getenv("GMEET_LINK", "https://meet.google.com/mhj-bcdx-bgu")
-    backend_url = os.getenv("BACKEND_URL", "https://add-on-backend.onrender.com")
-    
-    print(f"Starting recorder for {meet_link}")
-    print(f"Using backend: {backend_url}")
-
-    if bot_state['status'] == 'stopping':
-        print("Stop signal received before starting, aborting")
-        cleanup_bot()
-        return
-
-    # Initialize audio streamer
-    audio_streamer = RealtimeAudioStreamer(backend_url)
-    bot_state['audio_streamer'] = audio_streamer
-
-    # Check backend health
     try:
-        health_response = requests.get(f"{backend_url}/health", timeout=5)
-        if health_response.ok:
-            print(f"Backend is healthy: {health_response.json()}")
-        else:
-            print(f"Backend health check failed: {health_response.status_code}")
-            
-    except Exception as e:
-        print(f"Cannot connect to backend: {e}")
+        print("🔧 Step 2: Cleaning up Chrome processes")
+        cleanup_chrome_processes()
 
-    driver = None
+        meet_link = os.getenv("GMEET_LINK", "https://meet.google.com/mhj-bcdx-bgu")
+        backend_url = os.getenv("BACKEND_URL", "https://add-on-backend.onrender.com")
+        
+        print(f"🔗 Starting recorder for {meet_link}")
+        print(f"🌐 Using backend: {backend_url}")
 
-    try:
-        chrome_version = get_chrome_version()
-        print(f"Detected Chrome version: {chrome_version}")
-        
-        options = uc.ChromeOptions()
-        options.add_argument("--use-fake-ui-for-media-stream")
-        options.add_argument("--window-size=1280x720")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-setuid-sandbox")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--disable-extensions")
-        options.add_argument("--disable-application-cache")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-features=VizDisplayCompositor")
-        options.add_argument("--disable-features=TranslateUI")
-        options.add_argument("--disable-ipc-flooding-protection")
-        options.add_argument("--disable-background-timer-throttling")
-        options.add_argument("--disable-renderer-backgrounding")
-        options.add_argument("--disable-backgrounding-occluded-windows")
-        options.add_argument("--disable-features=AudioServiceOutOfProcess")
-        options.add_argument("--remote-debugging-port=9222")
-        options.add_argument("--autoplay-policy=no-user-gesture-required") 
-        options.add_argument("--no-first-run")
-        options.add_argument("--no-default-browser-check")
-        options.add_argument("--disable-default-apps")
-        options.add_argument("--disable-sync")
-        options.add_argument("--metrics-recording-only")
-        options.add_argument("--disable-password-generation")
-        options.add_argument("--disable-translate")
-        options.add_argument("--disable-features=AutofillServerCommunication")
-        
-        log_path = "chromedriver.log"
-        
-        driver = uc.Chrome(
-            version_main=chrome_version,
-            service_log_path=log_path, 
-            use_subprocess=False, 
-            options=options
-        )
-    except Exception as e:
-        print(f"Error initializing Chrome driver: {e}")
-        
+        if bot_state['status'] == 'stopping':
+            print("Stop signal received before starting, aborting")
+            cleanup_bot()
+            return
+
+        # Check backend health
         try:
-            fallback_options = uc.ChromeOptions()
-            fallback_options.add_argument("--use-fake-ui-for-media-stream")
-            fallback_options.add_argument("--window-size=1920x1080")
-            fallback_options.add_argument("--no-sandbox")
-            fallback_options.add_argument("--disable-setuid-sandbox")
-            fallback_options.add_argument("--disable-gpu")
+            health_response = requests.get(f"{backend_url}/health", timeout=5)
+            if health_response.ok:
+                print(f"✅ Backend is healthy: {health_response.json()}")
+            else:
+                print(f"⚠️ Backend health check failed: {health_response.status_code}")
+        except Exception as e:
+            print(f"❌ Cannot connect to backend: {e}")
+
+        # Initialize Chrome driver
+        print("🔧 Step 3: Initializing Chrome driver")
+        driver = None
+
+        try:
+            chrome_version = get_chrome_version()
+            print(f"🔍 Detected Chrome version: {chrome_version}")
+            
+            options = uc.ChromeOptions()
+            options.add_argument("--use-fake-ui-for-media-stream")
+            options.add_argument("--window-size=1280x720")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-setuid-sandbox")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--disable-extensions")
+            options.add_argument("--disable-application-cache")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-features=VizDisplayCompositor")
+            options.add_argument("--disable-features=TranslateUI")
+            options.add_argument("--disable-ipc-flooding-protection")
+            options.add_argument("--disable-background-timer-throttling")
+            options.add_argument("--disable-renderer-backgrounding")
+            options.add_argument("--disable-backgrounding-occluded-windows")
+            options.add_argument("--disable-features=AudioServiceOutOfProcess")
+            options.add_argument("--remote-debugging-port=9222")
+            options.add_argument("--autoplay-policy=no-user-gesture-required") 
+            options.add_argument("--no-first-run")
+            options.add_argument("--no-default-browser-check")
+            options.add_argument("--disable-default-apps")
+            options.add_argument("--disable-sync")
+            options.add_argument("--metrics-recording-only")
+            options.add_argument("--disable-password-generation")
+            options.add_argument("--disable-translate")
+            options.add_argument("--disable-features=AutofillServerCommunication")
+            
+            log_path = "chromedriver.log"
             
             driver = uc.Chrome(
-                version_main=108,
+                version_main=chrome_version,
                 service_log_path=log_path, 
                 use_subprocess=False, 
-                options=fallback_options
+                options=options
             )
-        except Exception as e2:
-            print(f"Error with fallback Chrome driver: {e2}")
-            bot_state['status'] = 'error'
-            cleanup_bot()
-            return
-        
-        if not driver:
-            print("Failed to initialize Chrome driver")
-            bot_state['status'] = 'error'
-            cleanup_bot()
-            return
-    
-    bot_state['driver'] = driver
-    driver.set_window_size(1280, 720)
-
-    email = os.getenv("GMAIL_USER_EMAIL", "")
-    password = os.getenv("GMAIL_USER_PASSWORD", "")
-
-    if email == "" or password == "":
-        print("Error: No email or password specified")
-        driver.quit()
-        bot_state['status'] = 'error'
-        cleanup_bot()
-        return
-
-    print("Google Sign in")
-    await google_sign_in(email, password, driver)
-
-    if bot_state['status'] == 'stopping':
-        print("Stop signal received, cleaning up")
-        cleanup_bot()
-        return
-
-    print(f"Navigating to meet link: {meet_link}")
-    driver.get(meet_link)
-    sleep(3)
-
-    try:
-        driver.execute_cdp_cmd(
-            "Browser.grantPermissions",
-            {
-                "origin": meet_link,
-                "permissions": [
-                    "geolocation",
-                    "audioCapture",
-                    "displayCapture",
-                    "videoCapture"
-                ],
-            },
-        )
-    except Exception as e:
-        print(f"Warning: Could not grant permissions: {e}")
-
-    if bot_state['status'] == 'stopping':
-        print("Stop signal received, cleaning up")
-        cleanup_bot()
-        return
-
-    try:
-        driver.find_element(
-            By.XPATH,
-            "/html/body/div/div[3]/div[2]/div/div/div/div/div[2]/div/div[1]/button",
-        ).click()
-        sleep(1)
-    except:
-        print("No popup")
-
-    print("Disable microphone")
-    sleep(5)
-
-    missing_mic = False
-
-    try:
-        print("Try to dismiss missing mic")
-        driver.find_element(By.CLASS_NAME, "VfPpkd-vQzf8d").find_element(By.XPATH, "..")
-        sleep(1)
-        missing_mic = True
-    except:
-        pass
-
-    try:
-        print("Allow Microphone")
-        driver.find_element(
-            By.XPATH,
-            "/html/body/div/div[3]/div[2]/div/div/div/div/div[2]/div/div[1]/button",
-        ).click()
-        sleep(1)
-    except:
-        print("No Allow Microphone popup")
-
-    try:
-        print("Try to disable microphone")
-        driver.find_element(
-            By.XPATH,
-            '//*[@id="yDmH0d"]/c-wiz/div/div/div[14]/div[3]/div/div[2]/div[4]/div/div/div[1]/div[1]/div/div[6]/div[1]/div/div',
-        ).click()
-    except:
-        print("No microphone to disable")
-
-    sleep(1)
-
-    print("Disable camera")
-    if not missing_mic:
-        driver.find_element(
-            By.XPATH,
-            '//*[@id="yDmH0d"]/c-wiz/div/div/div[14]/div[3]/div/div[2]/div[4]/div/div/div[1]/div[1]/div/div[6]/div[2]/div',
-        ).click()
-        sleep(1)
-    else:
-        print("assuming missing mic = missing camera")
-    
-    try:
-        print("Try to set name")
-        name_input_selectors = [
-            '//*[@id="yDmH0d"]/c-wiz/div/div/div[14]/div[3]/div/div[2]/div[4]/div/div/div[2]/div[1]/div[1]/div[3]/label/input',
-            '//input[@type="text"]',
-            '//input[contains(@placeholder, "Your name")]',
-            '//input[contains(@aria-label, "Your name")]'
-        ]
-        
-        name_set = False
-        for selector in name_input_selectors:
+            
+            print("✅ Chrome driver initialized successfully")
+        except Exception as e:
+            print(f"❌ Error initializing Chrome driver: {e}")
+            
             try:
-                name_input = driver.find_element(By.XPATH, selector)
-                name_input.click()
-                sleep(1)
-                name_input.send_keys("Recos AI Bot")
-                sleep(1)
-                name_set = True
-                break
-            except:
-                continue
+                print("🔄 Trying fallback Chrome driver...")
+                fallback_options = uc.ChromeOptions()
+                fallback_options.add_argument("--use-fake-ui-for-media-stream")
+                fallback_options.add_argument("--window-size=1920x1080")
+                fallback_options.add_argument("--no-sandbox")
+                fallback_options.add_argument("--disable-setuid-sandbox")
+                fallback_options.add_argument("--disable-gpu")
+                
+                driver = uc.Chrome(
+                    version_main=108,
+                    service_log_path=log_path, 
+                    use_subprocess=False, 
+                    options=fallback_options
+                )
+                print("✅ Fallback Chrome driver initialized")
+            except Exception as e2:
+                print(f"❌ Error with fallback Chrome driver: {e2}")
+                bot_state['status'] = 'error'
+                cleanup_bot()
+                return
+            
+            if not driver:
+                print("❌ Failed to initialize Chrome driver")
+                bot_state['status'] = 'error'
+                cleanup_bot()
+                return
         
-        if name_set:
-            print("Name set successfully")
-            join_button_selectors = [
-                '//*[@id="yDmH0d"]/c-wiz/div/div/div[14]/div[3]/div/div[2]/div[4]/div/div/div[2]/div[1]/div[2]/div[1]/div[1]/button/span',
-                '//button[contains(text(), "Join now")]',
-                '//button[contains(text(), "Ask to join")]',
-                '//button[contains(text(), "Continue")]',
-                '//button[contains(text(), "Join")]'
+        bot_state['driver'] = driver
+        driver.set_window_size(1280, 720)
+
+        # Check credentials
+        email = os.getenv("GMAIL_USER_EMAIL", "")
+        password = os.getenv("GMAIL_USER_PASSWORD", "")
+
+        if email == "" or password == "":
+            print("❌ Error: No email or password specified")
+            driver.quit()
+            bot_state['status'] = 'error'
+            cleanup_bot()
+            return
+
+        print("🔐 Step 4: Google Sign in")
+        try:
+            await google_sign_in(email, password, driver)
+            print("✅ Google sign in completed")
+        except Exception as e:
+            print(f"❌ Error during Google sign in: {e}")
+            driver.quit()
+            bot_state['status'] = 'error'
+            cleanup_bot()
+            return
+
+        if bot_state['status'] == 'stopping':
+            print("Stop signal received, cleaning up")
+            cleanup_bot()
+            return
+
+        print("🔗 Step 5: Navigating to meet link")
+        try:
+            driver.get(meet_link)
+            print(f"✅ Navigated to {meet_link}")
+            sleep(3)
+        except Exception as e:
+            print(f"❌ Error navigating to meet link: {e}")
+            driver.quit()
+            bot_state['status'] = 'error'
+            cleanup_bot()
+            return
+
+        # Grant permissions
+        try:
+            print("🔐 Step 6: Granting permissions")
+            driver.execute_cdp_cmd(
+                "Browser.grantPermissions",
+                {
+                    "origin": meet_link,
+                    "permissions": [
+                        "geolocation",
+                        "audioCapture",
+                        "displayCapture",
+                        "videoCapture"
+                    ],
+                },
+            )
+            print("✅ Permissions granted")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not grant permissions: {e}")
+
+        if bot_state['status'] == 'stopping':
+            print("Stop signal received, cleaning up")
+            cleanup_bot()
+            return
+
+        # Handle popups
+        try:
+            print("🔧 Step 7: Handling popups")
+            driver.find_element(
+                By.XPATH,
+                "/html/body/div/div[3]/div[2]/div/div/div/div/div[2]/div/div[1]/button",
+            ).click()
+            sleep(1)
+            print("✅ Popup handled")
+        except:
+            print("ℹ️ No popup found")
+
+        # Handle microphone
+        print("🎤 Step 8: Handling microphone settings")
+        sleep(3)
+
+        missing_mic = False
+
+        try:
+            print("Checking for missing mic popup")
+            driver.find_element(By.CLASS_NAME, "VfPpkd-vQzf8d").find_element(By.XPATH, "..")
+            sleep(1)
+            missing_mic = True
+            print("ℹ️ Missing mic popup detected")
+        except:
+            print("ℹ️ No missing mic popup")
+
+        try:
+            print("Allowing microphone")
+            driver.find_element(
+                By.XPATH,
+                "/html/body/div/div[3]/div[2]/div/div/div/div/div[2]/div/div[1]/button",
+            ).click()
+            sleep(1)
+            print("✅ Microphone allowed")
+        except:
+            print("ℹ️ No microphone permission popup")
+
+        try:
+            print("Disabling microphone")
+            driver.find_element(
+                By.XPATH,
+                '//*[@id="yDmH0d"]/c-wiz/div/div/div[14]/div[3]/div/div[2]/div[4]/div/div/div[1]/div[1]/div/div[6]/div[1]/div/div',
+            ).click()
+            print("✅ Microphone disabled")
+        except:
+            print("ℹ️ No microphone to disable")
+
+        sleep(1)
+
+        # Handle camera
+        print("📷 Step 9: Handling camera settings")
+        if not missing_mic:
+            try:
+                driver.find_element(
+                    By.XPATH,
+                    '//*[@id="yDmH0d"]/c-wiz/div/div/div[14]/div[3]/div/div[2]/div[4]/div/div/div[1]/div[1]/div/div[6]/div[2]/div',
+                ).click()
+                print("✅ Camera disabled")
+            except:
+                print("ℹ️ No camera to disable")
+        else:
+            print("ℹ️ Assuming missing mic = missing camera")
+        
+        # Set name
+        print("👤 Step 10: Setting bot name")
+        try:
+            name_input_selectors = [
+                '//*[@id="yDmH0d"]/c-wiz/div/div/div[14]/div[3]/div/div[2]/div[4]/div/div/div[2]/div[1]/div[1]/div[3]/label/input',
+                '//input[@type="text"]',
+                '//input[contains(@placeholder, "Your name")]',
+                '//input[contains(@aria-label, "Your name")]'
             ]
             
-            button_clicked = False
-            for selector in join_button_selectors:
+            name_set = False
+            for selector in name_input_selectors:
                 try:
-                    join_button = driver.find_element(By.XPATH, selector)
-                    join_button.click()
-                    sleep(2)
-                    button_clicked = True
+                    name_input = driver.find_element(By.XPATH, selector)
+                    name_input.click()
+                    sleep(1)
+                    name_input.send_keys("Recos AI Bot")
+                    sleep(1)
+                    name_set = True
+                    print(f"✅ Name set using selector: {selector}")
                     break
                 except:
                     continue
             
-            if not button_clicked:
-                print("Could not find or click the join button")
-    except Exception as e:
-        print(f"Error setting name: {e}")
-
-    if bot_state['status'] == 'stopping':
-        print("Stop signal received, cleaning up")
-        cleanup_bot()
-        return
-
-    try:
-        print("Looking for any join button...")
-        wait = WebDriverWait(driver, 5)
-        
-        join_button_selectors = [
-            "//span[contains(text(), 'Ask to join')]",
-            "//span[contains(text(), 'Join now')]",
-            "//span[contains(text(), 'Switch here')]",
-            "//span[contains(text(), 'Join')]",
-            "//span[contains(text(), 'Continue')]",
-            "//span[contains(text(), 'Request to join')]",
-            "//button[contains(text(), 'Ask to join')]",
-            "//button[contains(text(), 'Join now')]",
-            "//button[contains(text(), 'Request to join')]",
-            "//button[contains(text(), 'Join')]",
-            "//button[contains(text(), 'Continue')]",
-            "//button[contains(@aria-label, 'Join now')]",
-            "//button[contains(@aria-label, 'Ask to join')]",
-            "//button[contains(@aria-label, 'Join')]",
-            "//button[contains(@aria-label, 'Continue')]",
-            "//button[contains(@data-tooltip, 'Ask to join')]",
-            "//button[contains(@data-tooltip, 'Join now')]",
-            "//button[contains(@data-tooltip, 'Join')]",
-            "//button[contains(@data-tooltip, 'Continue')]",
-            "//div[contains(text(), 'Ask to join')]",
-            "//div[contains(text(), 'Request to join')]",
-            "//div[contains(text(), 'Join now')]",
-            "//div[contains(text(), 'Join')]",
-            "//div[contains(text(), 'Continue')]",
-            "//div[contains(@aria-label, 'Ask to join')]",
-            "//div[contains(@aria-label, 'Join now')]",
-            "//div[contains(@aria-label, 'Join')]",
-            "//div[contains(@aria-label, 'Continue')]",
-            "//div[contains(@data-tooltip, 'Ask to join')]",
-            "//div[contains(@data-tooltip, 'Join now')]",
-            "//div[contains(@data-tooltip, 'Join')]",
-            "//div[contains(@data-tooltip, 'Continue')]"
-        ]
-        
-        joined = False
-        for selector in join_button_selectors:
-            try:
-                join_button = wait.until(EC.element_to_be_clickable((By.XPATH, selector)))
-                join_button.click()
-                print(f"Clicked join button using selector: {selector}")
-                joined = True
-                break
-            except TimeoutException:
-                continue
-        
-        if not joined:
-            print("Could not find any join button")
-    except Exception as e:
-        print(f"Error handling join button: {e}")
-
-    if bot_state['status'] == 'stopping':
-        print("Stop signal received, cleaning up")
-        cleanup_bot()
-        return
-
-    print("Waiting for meeting to load...")
-    sleep(10)
-
-    try:
-        wait = WebDriverWait(driver, 5)
-        
-        meeting_indicators = [
-            "//div[contains(@data-self-name, 'Recos AI Bot')]",
-            "//span[contains(text(), 'You')]",
-            "//div[contains(@aria-label, 'You are')]",
-            "//button[contains(@aria-label, 'Leave call')]",
-            "//button[contains(@data-tooltip, 'Leave call')]",
-            "//div[contains(text(), 'Meeting details')]",
-            "//div[contains(text(), 'People')]",
-            "//div[contains(text(), 'Chat')]",
-            "//div[contains(text(), 'Activities')]"
-        ]
-        
-        in_meeting = False
-        for selector in meeting_indicators:
-            try:
-                wait.until(EC.presence_of_element_located((By.XPATH, selector)))
-                in_meeting = True
-                print(f"Detected meeting using selector: {selector}")
-                break
-            except TimeoutException:
-                continue
-        
-        if in_meeting:
-            print("Successfully joined the meeting!")
-        else:
-            print("Could not confirm if in meeting, proceeding anyway...")
-    except Exception as e:
-        print(f"Error checking meeting status: {e}")
-
-    if bot_state['status'] == 'stopping':
-        print("Stop signal received, cleaning up")
-        cleanup_bot()
-        return
-    
-    duration_minutes = int(os.getenv("DURATION_IN_MINUTES", "60"))  
-    duration_seconds = duration_minutes * 60
-
-    print("\n🎵 Starting recording and streaming...")
-    print(f"Duration: {duration_minutes} minutes")
-    
-    streaming_thread = audio_streamer.start_realtime_streaming(duration_minutes)
-    print(f"Recording for {duration_minutes} minutes...")
-
-    elapsed = 0
-    last_status_check = 0
-    status_check_interval = 60  
-    
-    while elapsed < duration_seconds and bot_state['status'] != 'stopping':
-        await asyncio.sleep(1)
-        elapsed += 1
-        
-        if elapsed - last_status_check >= status_check_interval:
-            if elapsed == 30 and audio_streamer.bytes_transmitted == 0:
-                print("WARNING: No audio data transmitted after 30 seconds!")
-            
-            if not audio_streamer.is_connected:
-                print(f"WARNING: WebSocket disconnected at {elapsed} seconds")
-                
-            print(f"Status check at {elapsed}s: Connected={audio_streamer.is_connected}, "
-                  f"Bytes sent={audio_streamer.bytes_transmitted/1024:.2f}KB")
-            last_status_check = elapsed
-    
-    
-    if streaming_thread:
-        for thread in streaming_thread:
-            if thread.is_alive():
-                thread.join(timeout=10)
-
-    print("Cleaning up session...")
-    if driver:
-        try:
-            driver.quit()
-            print("Chrome driver quit")
+            if not name_set:
+                print("⚠️ Could not set name")
         except Exception as e:
-            print(f"Error quitting driver: {e}")
-    
-    bot_state['status'] = 'idle'
-    bot_state['driver'] = None
-    bot_state['audio_streamer'] = None
-    bot_state['current_meeting'] = None
-    
-    print("Bot session ended cleanly")
+            print(f"❌ Error setting name: {e}")
+
+        if bot_state['status'] == 'stopping':
+            print("Stop signal received, cleaning up")
+            cleanup_bot()
+            return
+
+        # Join meeting
+        print("🔗 Step 11: Joining meeting")
+        try:
+            print("Looking for join button...")
+            wait = WebDriverWait(driver, 5)
+            
+            join_button_selectors = [
+                "//span[contains(text(), 'Ask to join')]",
+                "//span[contains(text(), 'Join now')]",
+                "//span[contains(text(), 'Switch here')]",
+                "//span[contains(text(), 'Join')]",
+                "//span[contains(text(), 'Continue')]",
+                "//span[contains(text(), 'Request to join')]",
+                "//button[contains(text(), 'Ask to join')]",
+                "//button[contains(text(), 'Join now')]",
+                "//button[contains(text(), 'Request to join')]",
+                "//button[contains(text(), 'Join')]",
+                "//button[contains(text(), 'Continue')]",
+                "//button[contains(@aria-label, 'Join now')]",
+                "//button[contains(@aria-label, 'Ask to join')]",
+                "//button[contains(@aria-label, 'Join')]",
+                "//button[contains(@aria-label, 'Continue')]",
+                "//button[contains(@data-tooltip, 'Ask to join')]",
+                "//button[contains(@data-tooltip, 'Join now')]",
+                "//button[contains(@data-tooltip, 'Join')]",
+                "//button[contains(@data-tooltip, 'Continue')]",
+                "//div[contains(text(), 'Ask to join')]",
+                "//div[contains(text(), 'Request to join')]",
+                "//div[contains(text(), 'Join now')]",
+                "//div[contains(text(), 'Join')]",
+                "//div[contains(text(), 'Continue')]",
+                "//div[contains(@aria-label, 'Ask to join')]",
+                "//div[contains(@aria-label, 'Join now')]",
+                "//div[contains(@aria-label, 'Join')]",
+                "//div[contains(@aria-label, 'Continue')]",
+                "//div[contains(@data-tooltip, 'Ask to join')]",
+                "//div[contains(@data-tooltip, 'Join now')]",
+                "//div[contains(@data-tooltip, 'Join')]",
+                "//div[contains(@data-tooltip, 'Continue')]"
+            ]
+            
+            joined = False
+            for selector in join_button_selectors:
+                try:
+                    join_button = wait.until(EC.element_to_be_clickable((By.XPATH, selector)))
+                    join_button.click()
+                    print(f"✅ Clicked join button using selector: {selector}")
+                    joined = True
+                    break
+                except TimeoutException:
+                    continue
+            
+            if not joined:
+                print("⚠️ Could not find any join button")
+        except Exception as e:
+            print(f"❌ Error handling join button: {e}")
+
+        if bot_state['status'] == 'stopping':
+            print("Stop signal received, cleaning up")
+            cleanup_bot()
+            return
+
+        # Wait for meeting to load
+        print("⏳ Step 12: Waiting for meeting to load...")
+        sleep(10)
+
+        # Check if in meeting
+        try:
+            print("🔍 Checking if in meeting")
+            wait = WebDriverWait(driver, 5)
+            
+            meeting_indicators = [
+                "//div[contains(@data-self-name, 'Recos AI Bot')]",
+                "//span[contains(text(), 'You')]",
+                "//div[contains(@aria-label, 'You are')]",
+                "//button[contains(@aria-label, 'Leave call')]",
+                "//button[contains(@data-tooltip, 'Leave call')]",
+                "//div[contains(text(), 'Meeting details')]",
+                "//div[contains(text(), 'People')]",
+                "//div[contains(text(), 'Chat')]",
+                "//div[contains(text(), 'Activities')]"
+            ]
+            
+            in_meeting = False
+            for selector in meeting_indicators:
+                try:
+                    wait.until(EC.presence_of_element_located((By.XPATH, selector)))
+                    in_meeting = True
+                    print(f"✅ Detected meeting using selector: {selector}")
+                    break
+                except TimeoutException:
+                    continue
+            
+            if in_meeting:
+                print("✅ Successfully joined the meeting!")
+            else:
+                print("⚠️ Could not confirm if in meeting, proceeding anyway...")
+        except Exception as e:
+            print(f"❌ Error checking meeting status: {e}")
+
+        if bot_state['status'] == 'stopping':
+            print("Stop signal received, cleaning up")
+            cleanup_bot()
+            return
+
+        # Initialize audio streamer
+        print("🎵 Step 13: Initializing audio streamer")
+        audio_streamer = RealtimeAudioStreamer(backend_url)
+        bot_state['audio_streamer'] = audio_streamer
+
+        # Start recording
+        print("🎙️ Step 14: Starting recording and streaming")
+        duration_minutes = int(os.getenv("DURATION_IN_MINUTES", "60"))  
+        duration_seconds = duration_minutes * 60
+
+        print(f"📅 Duration: {duration_minutes} minutes")
+        
+        streaming_thread = audio_streamer.start_realtime_streaming(duration_minutes)
+        print(f"🎙️ Recording for {duration_minutes} minutes...")
+
+        # Monitor recording
+        print("⏱️ Step 15: Monitoring recording...")
+        elapsed = 0
+        last_status_check = 0
+        status_check_interval = 60  
+        
+        while elapsed < duration_seconds and bot_state['status'] != 'stopping':
+            await asyncio.sleep(1)
+            elapsed += 1
+            
+            if elapsed - last_status_check >= status_check_interval:
+                if elapsed == 30 and audio_streamer.bytes_transmitted == 0:
+                    print("⚠️ WARNING: No audio data transmitted after 30 seconds!")
+                
+                if not audio_streamer.is_connected:
+                    print(f"⚠️ WARNING: WebSocket disconnected at {elapsed} seconds")
+                    
+                print(f"📊 Status check at {elapsed}s: Connected={audio_streamer.is_connected}, "
+                      f"Bytes sent={audio_streamer.bytes_transmitted/1024:.2f}KB")
+                last_status_check = elapsed
+        
+        # Cleanup
+        print("🧹 Step 16: Cleaning up session...")
+        if streaming_thread:
+            for thread in streaming_thread:
+                if thread.is_alive():
+                    thread.join(timeout=10)
+
+        if driver:
+            try:
+                driver.quit()
+                print("✅ Chrome driver quit")
+            except Exception as e:
+                print(f"❌ Error quitting driver: {e}")
+        
+        bot_state['status'] = 'idle'
+        bot_state['driver'] = None
+        bot_state['audio_streamer'] = None
+        bot_state['current_meeting'] = None
+        
+        print("✅ Bot session ended cleanly")
+
+    except Exception as e:
+        print(f"❌ Unhandled error in join_meet: {e}")
+        import traceback
+        traceback.print_exc()
+        cleanup_bot()
 
 def run_flask_server():
     """Run Flask server in the main thread"""
