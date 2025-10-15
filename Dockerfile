@@ -97,8 +97,11 @@ RUN mkdir /app /app/recordings /app/screenshots
 # Set the working directory inside the container
 WORKDIR /app
 
-# Install necessary dependencies
+# Fix GPG key issue and install necessary dependencies
 RUN apt-get update && \
+    apt-get install -y --no-install-recommends gnupg && \
+    wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - && \
+    apt-get update && \
     apt-get install -y \
     python3 \
     python3-pip \
@@ -136,7 +139,8 @@ RUN apt-get update && \
     # PortAudio dependencies
     portaudio19-dev \
     libasound2-dev \
-    libjack-dev
+    libjack-dev && \
+    rm -rf /var/lib/apt/lists/*
 
 RUN usermod -aG audio root
 RUN adduser root pulse-access
@@ -217,7 +221,6 @@ RUN chmod 600 /root/.Xauthority
 RUN rm /run/dbus/pid
 RUN mv pipewire.conf /etc/pipewire/pipewire.conf
 RUN mv pipewire-dbus.conf /etc/dbus-1/system.d/pipewire-dbus.conf
-
 
 RUN chmod +x /app/entrypoint.sh
 
