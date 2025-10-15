@@ -726,17 +726,52 @@ def get_chrome_version():
     return 108
 
 def cleanup_chrome_processes():
-    """Clean up any existing Chrome processes"""
+    """Clean up any existing Chrome processes - NON-BLOCKING version"""
     try:
-        if os.name == 'nt':  
-            subprocess.run("taskkill /f /im chrome.exe /t", shell=True)
-            subprocess.run("taskkill /f /im chromedriver.exe /t", shell=True)
-        else:  
-            subprocess.run("pkill -f chrome", shell=True)
-            subprocess.run("pkill -f chromedriver", shell=True)
-        print("Cleaned up existing Chrome processes")
+        print("🔧 Cleaning up Chrome processes...")
+        
+        if os.name == 'nt':  # Windows
+            # Use subprocess.Popen with timeout to prevent hanging
+            commands = [
+                "taskkill /f /im chrome.exe /t",
+                "taskkill /f /im chromedriver.exe /t"
+            ]
+        else:  # Linux
+            commands = [
+                "pkill -f chrome",
+                "pkill -f chromedriver",
+                # Add more specific process names
+                "pkill -f google-chrome",
+                "pkill -f chromium-browser"
+            ]
+        
+        # Run cleanup commands with timeouts
+        for cmd in commands:
+            try:
+                process = subprocess.Popen(
+                    cmd, 
+                    shell=True, 
+                    stdout=subprocess.DEVNULL, 
+                    stderr=subprocess.DEVNULL
+                )
+                
+                # Wait for process with timeout
+                try:
+                    process.wait(timeout=5)  # 5 second timeout
+                    print(f"✅ Cleanup command completed: {cmd}")
+                except subprocess.TimeoutExpired:
+                    print(f"⚠️ Cleanup command timed out: {cmd}")
+                    process.kill()
+                    process.wait()
+                    
+            except Exception as e:
+                print(f"⚠️ Error running cleanup command '{cmd}': {e}")
+                continue
+        
+        print("✅ Chrome process cleanup completed")
+        
     except Exception as e:
-        print(f"Error cleaning up Chrome processes: {e}")
+        print(f"⚠️ Error in Chrome process cleanup: {e}")
 
 async def join_meet():
     print("🔧 Step 1: Starting join_meet function")
