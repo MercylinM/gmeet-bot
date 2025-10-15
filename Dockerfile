@@ -90,7 +90,9 @@
 # CMD ["/app/entrypoint.sh"]
 
 # Use a base image, for example, Ubuntu
-FROM ultrafunk/undetected-chromedriver
+# FROM ultrafunk/undetected-chromedriver
+
+FROM ubuntu:22.04
 
 RUN mkdir /app /app/recordings /app/screenshots
 
