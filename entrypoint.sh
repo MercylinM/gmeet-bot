@@ -115,20 +115,14 @@
 
 # exit $EXIT_CODE
 
+#!/bin/bash
+
 set -e
 
 echo "Starting initialization..."
 
 # Clean up any existing X server locks and files
 rm -f /tmp/.X99-lock /tmp/.X11-unix/X99 2>/dev/null
-
-# Start D-Bus
-if ! pgrep -x "dbus-daemon" > /dev/null; then
-    echo "Starting D-Bus..."
-    rm -f /run/dbus/pid 2>/dev/null
-    dbus-daemon --system --fork
-    sleep 1
-fi
 
 # Start Xvfb
 echo "Starting Xvfb on display :99..."

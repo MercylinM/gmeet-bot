@@ -96,7 +96,7 @@ RUN mkdir /app /app/recordings /app/screenshots
 
 WORKDIR /app
 
-# Install system dependencies including portaudio and audio libraries
+# Install system dependencies including portaudio and audio libraries (remove dbus-x11)
 RUN apt-get update && \
     apt-get install -y \
     python3 \
@@ -125,7 +125,6 @@ RUN apt-get update && \
     fonts-wqy-zenhei \
     xterm \
     vim \
-    dbus-x11 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for PulseAudio
@@ -135,8 +134,7 @@ RUN useradd -m -u 1000 pulseuser && \
     chown -R pulseuser:pulse-access /run/pulse /home/pulseuser/.config/pulse && \
     chmod 755 /run/pulse
 
-# Environment variables
-ENV DBUS_SESSION_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket
+# Environment variables (remove DBUS_SESSION_BUS_ADDRESS)
 ENV XDG_RUNTIME_DIR=/run/user/1000
 ENV BACKEND_URL="https://add-on-backend.onrender.com"
 ENV X_SERVER_NUM=1
@@ -151,12 +149,6 @@ ENV LOOPBACK_LATENCY_MSEC=10
 ENV SOUNDDEVICE_IGNORE_ALSA_CONFIG=1
 ENV PULSE_RUNTIME_PATH=/run/pulse
 ENV PULSE_SERVER=unix:/run/pulse/native
-
-# D-Bus setup
-RUN mkdir -p /run/dbus && \
-    chmod 755 /run/dbus && \
-    mkdir -p /var/run/dbus && \
-    dbus-uuidgen > /var/lib/dbus/machine-id
 
 # Clean up pulse directories
 RUN rm -rf /var/run/pulse /var/lib/pulse /home/pulseuser/.config/pulse
@@ -174,10 +166,7 @@ RUN echo 'pulseuser ALL=(ALL:ALL) NOPASSWD:ALL' >> /etc/sudoers && \
     chown pulseuser:pulse-access /home/pulseuser/.Xauthority && \
     chmod 600 /home/pulseuser/.Xauthority
 
-# Copy PulseAudio configuration
-RUN mv pulseaudio.conf /etc/dbus-1/system.d/pulseaudio.conf
-
-# Make entrypoint executable
+# Make entrypoint executable (remove mv pulseaudio.conf, as no D-Bus)
 RUN chmod +x /app/entrypoint.sh
 
 # Switch to non-root user
