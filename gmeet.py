@@ -650,60 +650,21 @@ def index():
 
 # Browser automation functions - USING YOUR PROVEN METHODS
 async def google_sign_in(email, password, driver):
-    print("🔐 Starting Google sign in process")
+    driver.get("https://accounts.google.com")
+    sleep(1)
     
-    try:
-        # Navigate to Google sign in page
-        print("🔗 Navigating to Google sign in page")
-        driver.get("https://accounts.google.com")
-        
-        # Wait for page to load
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.NAME, "identifier"))
-        )
-        
-        # Enter email
-        print("📧 Entering email")
-        email_field = driver.find_element(By.NAME, "identifier")
-        email_field.clear()
-        email_field.send_keys(email)
-        
-        # Click next
-        print("➡️ Clicking next button")
-        driver.find_element(By.ID, "identifierNext").click()
-        
-        # Wait for password field
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.NAME, "Passwd"))
-        )
-        
-        # Enter password
-        print("🔑 Entering password")
-        password_field = driver.find_element(By.NAME, "Passwd")
-        password_field.clear()
-        password_field.send_keys(password)
-        password_field.send_keys(Keys.RETURN)
-        
-        # Wait for sign in to complete
-        print("⏳ Waiting for sign in to complete")
-        WebDriverWait(driver, 15).until(
-            lambda driver: driver.current_url and "accounts.google.com" not in driver.current_url
-        )
-        
-        print("✅ Google sign in completed successfully")
-        
-    except TimeoutException as e:
-        print(f"❌ Timeout during Google sign in: {e}")
-        # Take screenshot for debugging
-        try:
-            driver.save_screenshot("screenshots/signin_error.png")
-            print("📸 Saved screenshot to screenshots/signin_error.png")
-        except:
-            pass
-        raise e
-    except Exception as e:
-        print(f"❌ Error during Google sign in: {e}")
-        raise e
+    email_field = driver.find_element(By.NAME, "identifier")
+    email_field.send_keys(email)
+    sleep(2)
+    
+    driver.find_element(By.ID, "identifierNext").click()
+    sleep(3)
+    
+    password_field = driver.find_element(By.NAME, "Passwd")
+    password_field.click()
+    password_field.send_keys(password)
+    password_field.send_keys(Keys.RETURN)
+    sleep(5)
 
 def get_chrome_version():
     """Try to detect the installed Chrome version"""
