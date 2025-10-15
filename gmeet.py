@@ -56,6 +56,14 @@ class AudioDeviceManager:
     def list_audio_devices():
         """List all available audio input devices"""
         try:
+            # Force using PulseAudio
+            os.environ['SDL_AUDIODRIVER'] = 'pulse'
+            os.environ['AUDIODRIVER'] = 'pulse'
+            
+            # Set PulseAudio server path
+            if 'PULSE_SERVER' not in os.environ:
+                os.environ['PULSE_SERVER'] = 'unix:/run/pulse/native'
+            
             devices = sd.query_devices()
             input_devices = []
             
@@ -77,6 +85,14 @@ class AudioDeviceManager:
     def find_best_device():
         """Find the best audio input device for container environment"""
         try:
+            # Force using PulseAudio
+            os.environ['SDL_AUDIODRIVER'] = 'pulse'
+            os.environ['AUDIODRIVER'] = 'pulse'
+            
+            # Set PulseAudio server path
+            if 'PULSE_SERVER' not in os.environ:
+                os.environ['PULSE_SERVER'] = 'unix:/run/pulse/native'
+            
             devices = AudioDeviceManager.list_audio_devices()
             
             if not devices:
@@ -87,27 +103,37 @@ class AudioDeviceManager:
             for device in devices:
                 print(f"  - Device {device['index']}: {device['name']} ({device['channels']} channels)")
             
-            # Try different device selection strategies
+            # Strategy 1: Look for 'monitor' device (this is the virtual device)
+            for device in devices:
+                if 'monitor' in device['name'].lower():
+                    print(f"🎯 Using monitor device: {device['index']}")
+                    return device['index']
             
-            # Strategy 1: Look for 'pulse' device with reasonable channel count
+            # Strategy 2: Look for 'virtual_speaker.monitor' specifically
+            for device in devices:
+                if 'virtual_speaker.monitor' in device['name'].lower():
+                    print(f"🎯 Using virtual_speaker.monitor device: {device['index']}")
+                    return device['index']
+            
+            # Strategy 3: Look for 'pulse' device with reasonable channel count
             for device in devices:
                 if 'pulse' in device['name'].lower() and device['channels'] <= 2:
                     print(f"🎯 Using pulse device: {device['index']}")
                     return device['index']
             
-            # Strategy 2: Look for 'default' device
+            # Strategy 4: Look for 'default' device
             for device in devices:
                 if device['name'].lower() == 'default' and device['channels'] <= 2:
                     print(f"🎯 Using default device: {device['index']}")
                     return device['index']
             
-            # Strategy 3: Use first device with 1-2 channels
+            # Strategy 5: Use first device with 1-2 channels
             for device in devices:
                 if device['channels'] <= 2:
                     print(f"🎯 Using device with {device['channels']} channels: {device['index']}")
                     return device['index']
             
-            # Strategy 4: Try to get default input device as integer
+            # Strategy 6: Try to get default input device as integer
             try:
                 default_device = sd.default.device
                 if isinstance(default_device, (tuple, list)):
@@ -156,6 +182,14 @@ class RealtimeAudioStreamer:
         self.dtype = Config.DTYPE
         self.blocksize = Config.BLOCKSIZE
         self.device_index = None
+
+        # Force using PulseAudio
+        os.environ['SDL_AUDIODRIVER'] = 'pulse'
+        os.environ['AUDIODRIVER'] = 'pulse'
+        
+        # Set PulseAudio server path
+        if 'PULSE_SERVER' not in os.environ:
+            os.environ['PULSE_SERVER'] = 'unix:/run/pulse/native'
         
     async def connect_websocket(self):
         """Connect to backend WebSocket for audio streaming"""
@@ -256,9 +290,17 @@ class RealtimeAudioStreamer:
         """Capture audio using sounddevice with better error handling"""
         print("🎤 Starting audio capture with sounddevice...")
         
+        # Force using PulseAudio
+        os.environ['SDL_AUDIODRIVER'] = 'pulse'
+        os.environ['AUDIODRIVER'] = 'pulse'
+        
+        # Set PulseAudio server path
+        if 'PULSE_SERVER' not in os.environ:
+            os.environ['PULSE_SERVER'] = 'unix:/run/pulse/native'
+        
         # Try different configurations
         configs_to_try = [
-            # Config 1: Mono, specified device
+            # Config 1: Use monitor device directly if available
             {
                 'samplerate': self.sample_rate,
                 'channels': 1,
@@ -268,30 +310,34 @@ class RealtimeAudioStreamer:
                 'callback': self._audio_callback,
                 'latency': Config.LATENCY
             },
-            # Config 2: Mono, default device
+            # Config 2: Try with 2 channels
             {
                 'samplerate': self.sample_rate,
-                'channels': 1,
+                'channels': 2,
                 'dtype': self.dtype,
                 'blocksize': self.blocksize,
+                'device': self.device_index,
                 'callback': self._audio_callback,
                 'latency': Config.LATENCY
             },
-            # Config 3: Auto channel, specified device
+            # Config 3: Try with different sample rate
             {
-                'samplerate': self.sample_rate,
+                'samplerate': 44100,  # Try common rate
+                'channels': 1,
                 'dtype': self.dtype,
                 'blocksize': self.blocksize,
                 'device': self.device_index,
                 'callback': self._audio_callback,
                 'latency': 'high'
             },
-            # Config 4: Minimal config
+            # Config 4: Try with default device
             {
                 'samplerate': self.sample_rate,
                 'channels': 1,
                 'dtype': self.dtype,
+                'blocksize': self.blocksize,
                 'callback': self._audio_callback,
+                'latency': 'high'
             }
         ]
         
@@ -335,7 +381,7 @@ class RealtimeAudioStreamer:
             print(f"❌ Audio capture error: {e}")
         finally:
             self._cleanup_audio_capture()
-
+                
     def _run_websocket_sender(self):
         """Run WebSocket sender in a separate event loop"""
         loop = asyncio.new_event_loop()
@@ -1252,6 +1298,23 @@ async def join_meet():
         traceback.print_exc()
         cleanup_bot()
 
+def init_docker_audio():
+    """Initialize audio settings for Docker container environment"""
+    try:
+        # Force using PulseAudio
+        os.environ['SDL_AUDIODRIVER'] = 'pulse'
+        os.environ['AUDIODRIVER'] = 'pulse'
+        
+        # Set PulseAudio server if needed
+        if 'PULSE_SERVER' not in os.environ:
+            os.environ['PULSE_SERVER'] = 'unix:/run/pulse/native'
+        
+        print("🔧 Docker audio environment initialized")
+        return True
+    except Exception as e:
+        print(f"❌ Error initializing Docker audio: {e}")
+        return False
+
 def run_flask_server():
     """Run Flask server in the main thread"""
     port = int(os.getenv('PORT', 10000))
@@ -1303,6 +1366,9 @@ def run_production_server():
 @click.option('--server', is_flag=True, help='Run as HTTP server')
 @click.option('--production', is_flag=True, help='Run in production mode')
 def main(meet_link, duration, server, production):
+    # Initialize Docker audio environment first
+    init_docker_audio()
+    
     if server or os.getenv('RUN_AS_SERVER', 'true').lower() == 'true':
         if production or os.getenv('FLASK_ENV') == 'production':
             run_production_server()
@@ -1313,6 +1379,3 @@ def main(meet_link, duration, server, production):
             os.environ["GMEET_LINK"] = meet_link
         os.environ["DURATION_IN_MINUTES"] = str(duration)
         asyncio.run(join_meet())
-
-if __name__ == "__main__":
-    main()

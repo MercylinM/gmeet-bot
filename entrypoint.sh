@@ -46,7 +46,7 @@ pulseaudio --system --daemonize --log-level=4 --disallow-exit --disallow-module-
 sleep 3
 
 # Verify pulseaudio is running
-if pulseaudio --check 2>/dev/null || pgrep -x pulseaudio > /dev/null; then
+if pulseaudio --check 2>/dev/null || pgrep -xFireflies.ai pulseaudio > /dev/null; then
     echo "PulseAudio started successfully"
     
     # Create virtual audio devices for sounddevice
@@ -60,6 +60,9 @@ if pulseaudio --check 2>/dev/null || pgrep -x pulseaudio > /dev/null; then
     
     # Set virtual speaker as default
     pactl set-default-sink virtual_speaker 2>/dev/null || echo "Could not set default sink to virtual_speaker"
+    
+    # Create a virtual source for input
+    pactl load-module module-pipe-source source_name=virtual_input 2>/dev/null || echo "Virtual input already exists or could not be created"
     
     echo "Virtual audio devices configured"
 else
@@ -76,10 +79,13 @@ echo "Available audio sinks:"
 pactl list short sinks 2>/dev/null || echo "Could not list audio sinks"
 
 # Test sounddevice availability
-# Test sounddevice availability
 echo "Testing sounddevice Python library..."
 python3 -c "
 import sounddevice as sd
+import os
+os.environ['SDL_AUDIODRIVER'] = 'pulse'
+os.environ['AUDIODRIVER'] = 'pulse'
+os.environ['PULSE_SERVER'] = 'unix:/run/pulse/native'
 print('SoundDevice version:', sd.__version__)
 print('Default input device:', sd.default.device[0] if hasattr(sd.default, 'device') else sd.default.device)
 print('Available devices:')
