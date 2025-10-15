@@ -101,7 +101,7 @@ WORKDIR /app
 
 # Fix GPG key issue and install necessary dependencies
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends gnupg && \
+    apt-get install -y --no-install-recommends gnupg wget && \
     wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - && \
     apt-get update && \
     apt-get install -y \
