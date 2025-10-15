@@ -96,7 +96,7 @@ RUN mkdir /app /app/recordings /app/screenshots
 
 WORKDIR /app
 
-# Install system dependencies including portaudio and audio libraries (remove dbus-x11)
+# Install system dependencies
 RUN apt-get update && \
     apt-get install -y \
     python3 \
@@ -132,9 +132,13 @@ RUN useradd -m -u 1000 pulseuser && \
     usermod -aG audio,pulse-access pulseuser && \
     mkdir -p /run/pulse /home/pulseuser/.config/pulse && \
     chown -R pulseuser:pulse-access /run/pulse /home/pulseuser/.config/pulse && \
-    chmod 755 /run/pulse
+    chmod 755 /run/pulse && \
+    # Create /tmp/.X11-unix and set permissions
+    mkdir -p /tmp/.X11-unix && \
+    chown root:root /tmp/.X11-unix && \
+    chmod 1777 /tmp/.X11-unix
 
-# Environment variables (remove DBUS_SESSION_BUS_ADDRESS)
+# Environment variables
 ENV XDG_RUNTIME_DIR=/run/user/1000
 ENV BACKEND_URL="https://add-on-backend.onrender.com"
 ENV X_SERVER_NUM=1
@@ -166,7 +170,7 @@ RUN echo 'pulseuser ALL=(ALL:ALL) NOPASSWD:ALL' >> /etc/sudoers && \
     chown pulseuser:pulse-access /home/pulseuser/.Xauthority && \
     chmod 600 /home/pulseuser/.Xauthority
 
-# Make entrypoint executable (remove mv pulseaudio.conf, as no D-Bus)
+# Make entrypoint executable
 RUN chmod +x /app/entrypoint.sh
 
 # Switch to non-root user

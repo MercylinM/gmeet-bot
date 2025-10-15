@@ -117,6 +117,8 @@
 
 #!/bin/bash
 
+#!/bin/bash
+
 set -e
 
 echo "Starting initialization..."
@@ -136,9 +138,13 @@ if ! ps -p $XVFB_PID > /dev/null; then
 fi
 export DISPLAY=:99
 
-# Create PulseAudio configuration
-mkdir -p /home/pulseuser/.config/pulse
-chown -R pulseuser:pulse-access /home/pulseuser/.config/pulse /run/pulse
+# Ensure PulseAudio configuration directory exists with correct permissions
+if [ ! -d /home/pulseuser/.config/pulse ]; then
+    mkdir -p /home/pulseuser/.config/pulse
+    chown pulseuser:pulse-access /home/pulseuser/.config/pulse
+    chmod 755 /home/pulseuser/.config/pulse
+fi
+chown -R pulseuser:pulse-access /run/pulse
 chmod 755 /run/pulse
 
 cat > /home/pulseuser/.config/pulse/client.conf << 'EOF'
@@ -180,11 +186,11 @@ ctl.pulse {
 EOF
 sudo cp /home/pulseuser/.asoundrc /etc/asound.conf
 
-# Start PulseAudio
+# Start PulseAudio with verbose logging for debugging
 echo "Starting PulseAudio..."
 max_retries=3
 for ((i=1; i<=max_retries; i++)); do
-    pulseaudio --start --exit-idle-time=-1
+    pulseaudio --start --exit-idle-time=-1 --verbose
     sleep 2
     if pulseaudio --check; then
         echo "PulseAudio started successfully"
