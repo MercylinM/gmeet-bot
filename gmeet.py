@@ -83,31 +83,49 @@ class AudioDeviceManager:
                 print("❌ No audio input devices found")
                 return None
             
-            # In container environments, use simpler approach
             print("🔍 Available audio devices:")
             for device in devices:
                 print(f"  - Device {device['index']}: {device['name']} ({device['channels']} channels)")
             
-            # Try to use the default device first
+            # Try different device selection strategies
+            
+            # Strategy 1: Look for 'pulse' device with reasonable channel count
+            for device in devices:
+                if 'pulse' in device['name'].lower() and device['channels'] <= 2:
+                    print(f"🎯 Using pulse device: {device['index']}")
+                    return device['index']
+            
+            # Strategy 2: Look for 'default' device
+            for device in devices:
+                if device['name'].lower() == 'default' and device['channels'] <= 2:
+                    print(f"🎯 Using default device: {device['index']}")
+                    return device['index']
+            
+            # Strategy 3: Use first device with 1-2 channels
+            for device in devices:
+                if device['channels'] <= 2:
+                    print(f"🎯 Using device with {device['channels']} channels: {device['index']}")
+                    return device['index']
+            
+            # Strategy 4: Try to get default input device as integer
             try:
                 default_device = sd.default.device
-                if isinstance(default_device, tuple):
+                if isinstance(default_device, (tuple, list)):
                     default_input = default_device[0]  # Input device is first
                 else:
                     default_input = default_device
                 
-                print(f"🎯 Using default input device: {default_input}")
-                return default_input
+                # Ensure it's an integer
+                if isinstance(default_input, int):
+                    print(f"🎯 Using default input device index: {default_input}")
+                    return default_input
             except Exception as e:
-                print(f"⚠️ Cannot use default device: {e}")
+                print(f"⚠️ Cannot get default device: {e}")
             
-            # Fallback: use any available input device
-            for device in devices:
-                try:
-                    print(f"🔄 Using device {device['index']}: {device['name']}")
-                    return device['index']
-                except:
-                    continue
+            # Fallback: use first available device
+            if devices:
+                print(f"🔄 Fallback: Using first device {devices[0]['index']}")
+                return devices[0]['index']
             
             print("❌ No accessible audio input devices found")
             return None
@@ -235,29 +253,74 @@ class RealtimeAudioStreamer:
         return [capture_thread, sender_thread]
 
     def _capture_audio(self):
-        """Capture audio using sounddevice"""
+        """Capture audio using sounddevice with better error handling"""
         print("🎤 Starting audio capture with sounddevice...")
         
-        try:
-            # Configure stream parameters
-            stream_params = {
+        # Try different configurations
+        configs_to_try = [
+            # Config 1: Mono, specified device
+            {
                 'samplerate': self.sample_rate,
-                'channels': self.channels,
+                'channels': 1,
+                'dtype': self.dtype,
+                'blocksize': self.blocksize,
+                'device': self.device_index,
+                'callback': self._audio_callback,
+                'latency': Config.LATENCY
+            },
+            # Config 2: Mono, default device
+            {
+                'samplerate': self.sample_rate,
+                'channels': 1,
                 'dtype': self.dtype,
                 'blocksize': self.blocksize,
                 'callback': self._audio_callback,
                 'latency': Config.LATENCY
+            },
+            # Config 3: Auto channel, specified device
+            {
+                'samplerate': self.sample_rate,
+                'dtype': self.dtype,
+                'blocksize': self.blocksize,
+                'device': self.device_index,
+                'callback': self._audio_callback,
+                'latency': 'high'
+            },
+            # Config 4: Minimal config
+            {
+                'samplerate': self.sample_rate,
+                'channels': 1,
+                'dtype': self.dtype,
+                'callback': self._audio_callback,
             }
-            
-            if self.device_index is not None:
-                stream_params['device'] = self.device_index
-            
-            # Start the audio stream
-            self.stream = sd.InputStream(**stream_params)
-            self.stream.start()
-            
-            print(f"✅ Audio stream started: {self.sample_rate}Hz, {self.channels} channel, {self.dtype}, device: {self.device_index}")
-
+        ]
+        
+        stream_started = False
+        
+        for idx, config in enumerate(configs_to_try):
+            try:
+                print(f"🔄 Trying audio config {idx + 1}/{len(configs_to_try)}: {config}")
+                self.stream = sd.InputStream(**config)
+                self.stream.start()
+                stream_started = True
+                print(f"✅ Audio stream started with config {idx + 1}")
+                break
+            except Exception as e:
+                print(f"❌ Config {idx + 1} failed: {e}")
+                if self.stream:
+                    try:
+                        self.stream.close()
+                    except:
+                        pass
+                    self.stream = None
+                continue
+        
+        if not stream_started:
+            print("❌ All audio configurations failed!")
+            self.is_streaming = False
+            return
+        
+        try:
             # Keep the thread alive while streaming
             while self.is_streaming and not self._stop_event.is_set() and self.stream.active:
                 time.sleep(0.1)
@@ -418,14 +481,14 @@ class RealtimeAudioStreamer:
         self._stop_event.set()
         
     def get_status(self):
-        """Get current streaming status"""
+        """Get current streaming status - JSON serializable"""
         return {
             'is_streaming': self.is_streaming,
             'is_connected': self.is_connected,
             'bytes_transmitted': self.bytes_transmitted,
             'queue_size': self.audio_queue.qsize(),
             'reconnect_attempts': self.reconnect_attempts,
-            'device_index': self.device_index
+            'device_index': int(self.device_index) if isinstance(self.device_index, (int, float)) else str(self.device_index) if self.device_index else None
         }
 
 # Bot state management
@@ -463,18 +526,25 @@ keep_alive_thread.start()
 # Flask Routes
 @app.route('/health', methods=['GET'])
 def health():
-    """Health check endpoint"""
-    audio_status = bot_state['audio_streamer'].get_status() if bot_state['audio_streamer'] else {}
-    
-    return jsonify({
-        'status': 'healthy',
-        'service': 'gmeet-bot',
-        'bot_status': bot_state['status'],
-        'current_meeting': bot_state['current_meeting'],
-        'audio_status': audio_status,
-        'uptime': (datetime.datetime.now() - bot_state['start_time']).total_seconds() if bot_state['start_time'] else 0,
-        'timestamp': datetime.datetime.now().isoformat()
-    }), 200
+    """Health check endpoint - with proper JSON serialization"""
+    try:
+        audio_status = bot_state['audio_streamer'].get_status() if bot_state['audio_streamer'] else {}
+        
+        return jsonify({
+            'status': 'healthy',
+            'service': 'gmeet-bot',
+            'bot_status': bot_state['status'],
+            'current_meeting': bot_state['current_meeting'],
+            'audio_status': audio_status,
+            'uptime': (datetime.datetime.now() - bot_state['start_time']).total_seconds() if bot_state['start_time'] else 0,
+            'timestamp': datetime.datetime.now().isoformat()
+        }), 200
+    except Exception as e:
+        print(f"❌ Error in health endpoint: {e}")
+        return jsonify({
+            'status': 'error',
+            'error': str(e)
+        }), 500
 
 @app.route('/audio-devices', methods=['GET'])
 def list_audio_devices():
@@ -621,16 +691,23 @@ def cleanup_bot():
 @app.route('/status', methods=['GET'])
 def get_status():
     """Get current bot status"""
-    audio_status = bot_state['audio_streamer'].get_status() if bot_state['audio_streamer'] else {}
-    
-    return jsonify({
-        'success': True,
-        'status': bot_state['status'],
-        'isRunning': bot_state['status'] == 'running',
-        'current_meeting': bot_state['current_meeting'],
-        'audio_status': audio_status,
-        'uptime': (datetime.datetime.now() - bot_state['start_time']).total_seconds() if bot_state['start_time'] else 0
-    })
+    try:
+        audio_status = bot_state['audio_streamer'].get_status() if bot_state['audio_streamer'] else {}
+        
+        return jsonify({
+            'success': True,
+            'status': bot_state['status'],
+            'isRunning': bot_state['status'] == 'running',
+            'current_meeting': bot_state['current_meeting'],
+            'audio_status': audio_status,
+            'uptime': (datetime.datetime.now() - bot_state['start_time']).total_seconds() if bot_state['start_time'] else 0
+        })
+    except Exception as e:
+        print(f"❌ Error in status endpoint: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 @app.route('/', methods=['GET'])
 def index():
@@ -648,7 +725,7 @@ def index():
         }
     })
 
-# Browser automation functions - USING YOUR PROVEN METHODS
+# Browser automation functions
 async def google_sign_in(email, password, driver):
     driver.get("https://accounts.google.com")
     sleep(1)
@@ -692,7 +769,6 @@ def cleanup_chrome_processes():
         print("🔧 Cleaning up Chrome processes...")
         
         if os.name == 'nt':  # Windows
-            # Use subprocess.Popen with timeout to prevent hanging
             commands = [
                 "taskkill /f /im chrome.exe /t",
                 "taskkill /f /im chromedriver.exe /t"
@@ -701,12 +777,10 @@ def cleanup_chrome_processes():
             commands = [
                 "pkill -f chrome",
                 "pkill -f chromedriver",
-                # Add more specific process names
                 "pkill -f google-chrome",
                 "pkill -f chromium-browser"
             ]
         
-        # Run cleanup commands with timeouts
         for cmd in commands:
             try:
                 process = subprocess.Popen(
@@ -716,9 +790,8 @@ def cleanup_chrome_processes():
                     stderr=subprocess.DEVNULL
                 )
                 
-                # Wait for process with timeout
                 try:
-                    process.wait(timeout=5)  # 5 second timeout
+                    process.wait(timeout=5)
                     print(f"✅ Cleanup command completed: {cmd}")
                 except subprocess.TimeoutExpired:
                     print(f"⚠️ Cleanup command timed out: {cmd}")
@@ -1121,6 +1194,14 @@ async def join_meet():
         print(f"📅 Duration: {duration_minutes} minutes")
         
         streaming_thread = audio_streamer.start_realtime_streaming(duration_minutes)
+        
+        if streaming_thread is None:
+            print("❌ Failed to start audio streaming")
+            driver.quit()
+            bot_state['status'] = 'error'
+            cleanup_bot()
+            return
+            
         print(f"🎙️ Recording for {duration_minutes} minutes...")
 
         # Monitor recording
