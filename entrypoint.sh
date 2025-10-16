@@ -73,9 +73,9 @@
 #!/bin/bash
 set -e
 
-echo "Starting initialization as user..."
+echo "Initializing environment..."
 
-# Setup runtime directories for PulseAudio
+# Setup runtime directories for PulseAudio and D-Bus
 mkdir -p /run/user/1000 /run/user/1000/pulse /run/user/1000/bus
 chmod 700 /run/user/1000 /run/user/1000/pulse /run/user/1000/bus
 
@@ -83,54 +83,47 @@ export XDG_RUNTIME_DIR=/run/user/1000
 export PULSE_RUNTIME_PATH=/run/user/1000/pulse
 export DISPLAY=:99
 
-# Kill existing PulseAudio socket if any
-rm -f /run/user/1000/pulse/*
+# Clean up any stale PulseAudio sockets
+rm -f /run/user/1000/pulse/* || true
 
-# Start D-Bus if needed
+# Start D-Bus
 if ! pgrep -x "dbus-daemon" > /dev/null; then
     echo "Starting D-Bus..."
-    rm -f /run/dbus/pid 2>/dev/null
     mkdir -p /var/run/dbus
+    rm -f /var/run/dbus/pid || true
     dbus-daemon --system --fork
     sleep 2
 fi
 
-# Start Xvfb
+# Start Xvfb for headless Chrome
 echo "Starting Xvfb..."
 Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset &
-XVFB_PID=$!
 sleep 3
-if ! ps -p $XVFB_PID > /dev/null; then
-    echo "ERROR: Xvfb failed to start"
+if ! xdpyinfo -display :99 >/dev/null 2>&1; then
+    echo "❌ Xvfb failed to start"
     exit 1
 fi
-echo "Xvfb started successfully on display :99"
+echo "✅ Xvfb started successfully on display :99"
 
-# Start PulseAudio in user mode
-echo "Starting PulseAudio in user mode..."
-pulseaudio --daemonize --log-level=4 --disallow-exit --exit-idle-time=-1 --disallow-module-loading --disable-shm
+# Start PulseAudio
+echo "Starting PulseAudio..."
+pulseaudio --start --daemonize --log-level=4 --exit-idle-time=-1 --disallow-exit --disable-shm || true
 sleep 3
 
-# Check if PulseAudio is running
+# Verify PulseAudio
 if pactl info >/dev/null 2>&1; then
-    echo "PulseAudio started successfully"
-    # Set up null sink and loopback if needed
-    if ! pactl list short sinks | grep -q virtual_speaker; then
-        pactl load-module module-null-sink sink_name=virtual_speaker sink_properties=device.description="Virtual_Speaker"
-    fi
-    if ! pactl list short modules | grep -q "module-loopback.*virtual_speaker.monitor"; then
-        pactl load-module module-loopback source=virtual_speaker.monitor sink=virtual_speaker latency_msec=1
-    fi
+    echo "✅ PulseAudio is running"
+    pactl load-module module-null-sink sink_name=virtual_speaker sink_properties=device.description="Virtual_Speaker" || true
+    pactl load-module module-loopback source=virtual_speaker.monitor sink=virtual_speaker latency_msec=1 || true
     pactl set-default-sink virtual_speaker || echo "Could not set default sink"
-    echo "Virtual audio setup complete"
 else
-    echo "WARNING: PulseAudio not properly started"
+    echo "⚠️ PulseAudio failed to start"
 fi
 
-# Test FFmpeg
+# Check FFmpeg
 echo "Testing FFmpeg..."
-ffmpeg -version >/dev/null && echo "FFmpeg OK" || echo "FFmpeg test failed"
+ffmpeg -version >/dev/null 2>&1 && echo "✅ FFmpeg OK" || echo "⚠️ FFmpeg missing or broken"
 
-# Run the application
-echo "Starting Google Meet Bot..."
+# Start application
+echo "🚀 Starting Google Meet Bot..."
 exec python3 gmeet.py --server --production

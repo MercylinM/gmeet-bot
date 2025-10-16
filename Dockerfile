@@ -1,67 +1,65 @@
-FROM ultrafunk/undetected-chromedriver
+# Base image with Chrome & Python
+FROM ultrafunk/undetected-chromedriver:latest
 
-RUN mkdir -p /app /app/recordings /app/screenshots
+# Set noninteractive mode to avoid prompts
+ENV DEBIAN_FRONTEND=noninteractive
 
+# Create app directory
 WORKDIR /app
 
 # Install dependencies
-RUN apt-get update && \
-    apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     pulseaudio \
     pulseaudio-utils \
     dbus-x11 \
-    curl \
-    sudo \
     xvfb \
-    libnss3-tools \
     ffmpeg \
-    xdotool \
+    curl \
     unzip \
     x11vnc \
+    xdotool \
+    libnss3-tools \
+    libxss1 \
+    libappindicator3-1 \
     libfontconfig \
     libfreetype6 \
-    xfonts-cyrillic \
-    xfonts-scalable \
     fonts-liberation \
     fonts-ipafont-gothic \
     fonts-wqy-zenhei \
-    xterm \
-    vim \
     alsa-utils \
-    libxss1 \
-    libappindicator3-1 \
-    && rm -rf /var/lib/apt/lists/*
+    xfonts-base \
+    vim \
+    sudo \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Create a non-root user
-RUN adduser -D myuser && \
+# Create non-root user for security
+RUN useradd -m -u 1000 -s /bin/bash myuser && \
     usermod -aG audio,pulse-access myuser
 
-# Set environment variables for user runtime
-ENV HOME /home/myuser
-ENV DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+# Environment vars
+ENV HOME=/home/myuser
 ENV XDG_RUNTIME_DIR=/run/user/1000
+ENV DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
 ENV PULSE_RUNTIME_PATH=/run/user/1000/pulse
+ENV DISPLAY=:99
 
-# Setup runtime directories with proper permissions
+# Setup runtime directories
 RUN mkdir -p /run/user/1000 && \
-    chown -R myuser:myuser /run/user/1000 && \
-    mkdir -p $XDG_RUNTIME_DIR && \
-    chown myuser:myuser $XDG_RUNTIME_DIR
+    chown -R myuser:myuser /run/user/1000
 
-# Switch to non-root user
-USER myuser
-WORKDIR /app
-
-# Copy requirements
-COPY requirements.txt /app/
-RUN pip3 install --no-cache-dir -r requirements.txt gunicorn
-
-# Copy app files
+# Copy app code
 COPY . /app
+
+# Install Python deps
+RUN pip3 install --no-cache-dir -r requirements.txt gunicorn
 
 # Make entrypoint executable
 RUN chmod +x /app/entrypoint.sh
 
-CMD ["/app/entrypoint.sh"]
+# Switch to non-root user
+USER myuser
+
+# Entrypoint
+ENTRYPOINT ["/app/entrypoint.sh"]
