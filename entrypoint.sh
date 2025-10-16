@@ -15,12 +15,20 @@ export DISPLAY=:99
 rm -f /run/user/1000/pulse/* || true
 
 # Start D-Bus
+# if ! pgrep -x "dbus-daemon" > /dev/null; then
+#     echo "Starting D-Bus..."
+#     mkdir -p /var/run/dbus
+#     rm -f /var/run/dbus/pid || true
+#     dbus-daemon --system --fork
+#     sleep 2
+# fi
+
 if ! pgrep -x "dbus-daemon" > /dev/null; then
-    echo "Starting D-Bus..."
-    mkdir -p /var/run/dbus
-    rm -f /var/run/dbus/pid || true
-    dbus-daemon --system --fork
-    sleep 2
+    echo "Starting user D-Bus session..."
+    mkdir -p "${XDG_RUNTIME_DIR}/bus"
+    dbus-daemon --session --fork --print-address > "${XDG_RUNTIME_DIR}/bus/address.txt" 2>/dev/null || true
+    export DBUS_SESSION_BUS_ADDRESS=unix:path=${XDG_RUNTIME_DIR}/bus
+    sleep 1
 fi
 
 # Start Xvfb for headless Chrome
