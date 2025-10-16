@@ -71,19 +71,22 @@
 # exit $
 
 #!/bin/bash
-
-set -e  
+set -e
 
 echo "Starting initialization..."
 
-# Set up runtime directories for PulseAudio
-mkdir -p /tmp/runtime-root /tmp/pulse
+# Setup runtime directories and permissions for PulseAudio
+mkdir -p /tmp/runtime-root /tmp/pulse /run/dbus /var/run/dbus
 chmod 700 /tmp/runtime-root /tmp/pulse
+chmod 755 /run/dbus /var/run/dbus
+
 export XDG_RUNTIME_DIR=/tmp/runtime-root
 export PULSE_RUNTIME_PATH=/tmp/pulse
+export DISPLAY=:99
 
-# Clean up any existing X server locks and files
-rm -f /tmp/.X99-lock /tmp/.X11-unix/X99 2>/dev/null
+# Remove stale socket files and PulseAudio configs
+rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
+rm -rf /var/run/pulse /var/lib/pulse /root/.config/pulse
 
 # Start D-Bus if not running
 if ! pgrep -x "dbus-daemon" > /dev/null; then
@@ -94,68 +97,46 @@ if ! pgrep -x "dbus-daemon" > /dev/null; then
     sleep 2
 fi
 
-# Start Xvfb on display 99
+# Start Xvfb on :99
 echo "Starting Xvfb on display :99..."
 Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset &
 XVFB_PID=$!
-
-# Wait for Xvfb to start properly
 sleep 3
-
-# Check if Xvfb is running
 if ! ps -p $XVFB_PID > /dev/null; then
     echo "ERROR: Xvfb failed to start"
     exit 1
 fi
-
 echo "Xvfb started successfully on display :99"
 
-# Set display for all applications
-export DISPLAY=:99
+# Start PulseAudio in user mode *without* --system
+echo "Starting PulseAudio in user mode..."
+pulseaudio --daemonize --log-level=4 --disallow-exit --exit-idle-time=-1 --disallow-module-loading --disable-shm
 
-# Start PulseAudio in system mode
-echo "Starting PulseAudio in system mode..."
-pulseaudio --system --daemonize --log-level=4 --disallow-exit --exit-idle-time=-1 --disallow-module-loading
-
-# Wait for PulseAudio to initialize
 sleep 3
 
-# Verify PulseAudio is running and set up virtual audio
+# Verify PulseAudio is running and setup null sink
 if pactl info >/dev/null 2>&1; then
     echo "PulseAudio started successfully"
-    
-    # Create virtual audio environment
-    echo "Setting up virtual audio for FFmpeg..."
-    
-    # Create null sink if it doesn't exist
     if ! pactl list short sinks | grep -q virtual_speaker; then
         pactl load-module module-null-sink sink_name=virtual_speaker sink_properties=device.description="Virtual_Speaker"
     fi
-    
-    # Create loopback to capture audio
     if ! pactl list short modules | grep -q "module-loopback.*virtual_speaker.monitor"; then
         pactl load-module module-loopback source=virtual_speaker.monitor sink=virtual_speaker latency_msec=1
     fi
-    
-    # Set virtual speaker as default
-    pactl set-default-sink virtual_speaker 2>/dev/null || echo "Note: Could not set default sink"
-    
+    pactl set-default-sink virtual_speaker 2>/dev/null || echo "Could not set default sink"
     echo "Virtual audio setup complete"
-    echo "FFmpeg will capture from: virtual_speaker.monitor"
-    
-    # List available audio devices 
-    echo "Available audio sources:"
-    pactl list short sources 2>/dev/null || echo "Could not list audio sources"
-    
 else
-    echo "WARNING: PulseAudio may not be running properly"
-    echo "Attempting to continue - audio capture may not work"
+    echo "WARNING: PulseAudio not running properly; audio may not function"
 fi
 
 # Test FFmpeg
 echo "Testing FFmpeg..."
-ffmpeg -version >/dev/null && echo "FFmpeg OK - ready for audio capture" || echo "FFmpeg test failed"
+if ffmpeg -version >/dev/null 2>&1; then
+    echo "FFmpeg OK - ready for audio capture"
+else
+    echo "FFmpeg test failed"
+fi
 
-# Run the Flask server (bot will wait for HTTP trigger)
+# Start the Python Google Meet bot server
 echo "Starting Google Meet Bot HTTP server..."
 exec python3 gmeet.py --server --production
