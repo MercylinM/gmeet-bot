@@ -31,6 +31,10 @@ if ! pgrep -x "dbus-daemon" > /dev/null; then
     sleep 1
 fi
 
+# Clean up old Xvfb lock
+rm -f /tmp/.X99-lock || true
+
+
 # Start Xvfb for headless Chrome
 echo "Starting Xvfb..."
 Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset &
@@ -59,6 +63,8 @@ fi
 # Check FFmpeg
 echo "Testing FFmpeg..."
 ffmpeg -version >/dev/null 2>&1 && echo "✅ FFmpeg OK" || echo "⚠️ FFmpeg missing or broken"
+
+rm -rf /home/myuser/.local/share/undetected_chromedriver/* || true
 
 # Start application
 echo "🚀 Starting Google Meet Bot..."

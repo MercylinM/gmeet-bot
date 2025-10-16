@@ -766,7 +766,7 @@ async def join_meet():
 
     cleanup_chrome_processes()
     meet_link = os.getenv("GMEET_LINK", "https://meet.google.com/mhj-bcdx-bgu")
-    backend_url = os.getenv("BACKEND_URL", "http://localhost:3000")
+    backend_url = os.getenv("BACKEND_URL", "https://add-on-backend.onrender.com")
     print(f"Starting recorder for {meet_link}")
     print(f"Using backend: {backend_url}")
 
@@ -797,6 +797,9 @@ async def join_meet():
         print(f"Detected Chrome version: {chrome_version}")
 
         options = uc.ChromeOptions()
+        options.add_argument("--headless=new")
+        options.add_argument("--disable-software-rasterizer")
+        options.add_argument("--remote-debugging-port=9222")
         options.add_argument("--use-fake-ui-for-media-stream")
         options.add_argument("--window-size=1280x720")
         options.add_argument("--no-sandbox")
