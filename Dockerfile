@@ -1,65 +1,92 @@
-# Base image with Chrome & Python
-FROM ultrafunk/undetected-chromedriver:latest
+FROM ultrafunk/undetected-chromedriver
 
-# Set noninteractive mode to avoid prompts
-ENV DEBIAN_FRONTEND=noninteractive
+RUN mkdir /app /app/recordings /app/screenshots
 
-# Create app directory
 WORKDIR /app
 
-# Install dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install system dependencies including sox and pulseaudio-utils
+RUN apt-get update && \
+    apt-get install -y \
     python3 \
     python3-pip \
     pulseaudio \
     pulseaudio-utils \
-    dbus-x11 \
-    xvfb \
-    ffmpeg \
+    pavucontrol \
     curl \
+    sudo \
+    xvfb \
+    libnss3-tools \
+    ffmpeg \
+    sox \
+    xdotool \
     unzip \
     x11vnc \
-    xdotool \
-    libnss3-tools \
-    libxss1 \
-    libappindicator3-1 \
     libfontconfig \
     libfreetype6 \
+    xfonts-cyrillic \
+    xfonts-scalable \
     fonts-liberation \
     fonts-ipafont-gothic \
     fonts-wqy-zenhei \
-    alsa-utils \
-    xfonts-base \
+    xterm \
     vim \
-    sudo \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+    dbus-x11 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user for security
-RUN useradd -m -u 1000 -s /bin/bash myuser && \
-    usermod -aG audio,pulse-access myuser
+# User and permission setup
+RUN usermod -aG audio root && \
+    adduser root pulse-access
 
-# Environment vars
-ENV HOME=/home/myuser
-ENV XDG_RUNTIME_DIR=/run/user/1000
-ENV DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
-ENV PULSE_RUNTIME_PATH=/run/user/1000/pulse
-ENV DISPLAY=:99
+# Environment variables
+ENV DBUS_SESSION_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket
+ENV XDG_RUNTIME_DIR=/run/user/0
+ENV BACKEND_URL="https://add-on-backend.onrender.com"
+ENV X_SERVER_NUM=1
+ENV SCREEN_WIDTH=1280
+ENV SCREEN_HEIGHT=1024
+ENV SCREEN_RESOLUTION=1280x1024
+ENV COLOR_DEPTH=24
+ENV DISPLAY=:${X_SERVER_NUM}.0
 
-# Setup runtime directories
-RUN mkdir -p /run/user/1000 && \
-    chown -R myuser:myuser /run/user/1000
+# D-Bus setup
+RUN mkdir -p /run/dbus && \
+    chmod 755 /run/dbus && \
+    mkdir -p /var/run/dbus && \
+    dbus-uuidgen > /var/lib/dbus/machine-id
 
-# Copy app code
+# Clean up pulse directories
+RUN rm -rf /var/run/pulse /var/lib/pulse /root/.config/pulse
+
+# Install PortAudio
+RUN wget http://files.portaudio.com/archives/pa_stable_v190700_20210406.tgz && \
+    tar -xvf pa_stable_v190700_20210406.tgz && \
+    mv portaudio /usr/src/ && \
+    rm pa_stable_v190700_20210406.tgz
+
+WORKDIR /usr/src/portaudio
+RUN ./configure && \
+    make && \
+    make install && \
+    ldconfig
+
+WORKDIR /app
+
+# Copy requirements first for better caching
+COPY requirements.txt /app/
+RUN pip3 install --no-cache-dir -r requirements.txt gunicorn
+
+# Copy application files
 COPY . /app
 
-# Install Python deps
-RUN pip3 install --no-cache-dir -r requirements.txt gunicorn
+# Additional setup
+RUN echo 'user ALL=(ALL:ALL) NOPASSWD:ALL' >> /etc/sudoers && \
+    touch /root/.Xauthority && \
+    chmod 600 /root/.Xauthority
+
+# Copy PulseAudio configuration
+RUN mv pulseaudio.conf /etc/dbus-1/system.d/pulseaudio.conf
 
 # Make entrypoint executable
 RUN chmod +x /app/entrypoint.sh
 
-# Switch to non-root user
-USER myuser
-
-# Entrypoint
-ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["/app/entrypoint.sh"]
