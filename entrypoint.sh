@@ -72,39 +72,56 @@
 
 #!/bin/bash
 
-# Start D-Bus
-mkdir -p /var/run/dbus
-dbus-daemon --config-file=/usr/share/dbus-1/system.conf --print-address
+# Set up runtime directories
+mkdir -p /tmp/runtime-root /tmp/pulse
+chmod 700 /tmp/runtime-root /tmp/pulse
+export XDG_RUNTIME_DIR=/tmp/runtime-root
+export PULSE_RUNTIME_PATH=/tmp/pulse
 
-# Start PulseAudio with virtual audio setup
-echo "Starting PulseAudio..."
-pulseaudio --start --log-level=4
+# Start D-Bus
+echo "Starting D-Bus..."
+mkdir -p /var/run/dbus
+dbus-daemon --system --fork
 sleep 2
+
+# Start PulseAudio with proper configuration
+echo "Starting PulseAudio..."
+pulseaudio --check || pulseaudio --daemonize=yes --log-level=4 --exit-idle-time=-1
+sleep 3
 
 # Set up virtual audio environment
 echo "Setting up virtual audio..."
-pactl load-module module-null-sink sink_name=virtual_speaker sink_properties=device.description="Virtual_Speaker"
-pactl load-module module-loopback source=virtual_speaker.monitor sink=virtual_speaker
-pactl set-default-sink virtual_speaker
+pactl list short modules | grep -q module-null-sink || \
+    pactl load-module module-null-sink sink_name=virtual_speaker sink_properties=device.description="Virtual_Speaker"
+
+pactl list short modules | grep -q "module-loopback.*virtual_speaker.monitor" || \
+    pactl load-module module-loopback source=virtual_speaker.monitor sink=virtual_speaker latency_msec=1
+
+# Set virtual speaker as default
+pactl set-default-sink virtual_speaker 2>/dev/null || true
 
 # Verify audio setup
-echo "Audio devices:"
-pactl list sinks short
-echo "Audio sources:"
-pactl list sources short
+echo "Audio setup verification:"
+echo "Sinks:"
+pactl list sinks short || echo "Failed to list sinks"
+echo "Sources:"
+pactl list sources short || echo "Failed to list sources"
 
-# Start Xvfb
-echo "Starting Xvfb..."
-Xvfb :1 -screen 0 1280x1024x24 &
-export DISPLAY=:1
+# Start Xvfb on display :99
+echo "Starting Xvfb on :99..."
+Xvfb :99 -screen 0 1280x1024x24 +extension RANDR &
+export DISPLAY=:99
 
 # Wait for Xvfb to start
-sleep 2
+sleep 3
 
-# Test FFmpeg
+# Test basic functionality
 echo "Testing FFmpeg..."
-ffmpeg -version
+ffmpeg -version > /dev/null && echo "FFmpeg OK" || echo "FFmpeg test failed"
 
-# Start the application
-echo "Starting application..."
+echo "Testing Python..."
+python3 --version > /dev/null && echo "Python OK" || echo "Python test failed"
+
+# Start the application - let gmeet.py handle the server setup
+echo "Starting application with production mode..."
 exec python3 gmeet.py --server --production
