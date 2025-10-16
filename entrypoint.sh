@@ -115,7 +115,7 @@ export DISPLAY=:99
 
 # Start PulseAudio in system mode
 echo "Starting PulseAudio in system mode..."
-pulseaudio --system --daemonize --log-level=4 --disallow-exit --exit-idle-time=-1
+pulseaudio --system --daemonize --log-level=4 --disallow-exit --exit-idle-time=-1 --disallow-module-loading
 
 # Wait for PulseAudio to initialize
 sleep 3
