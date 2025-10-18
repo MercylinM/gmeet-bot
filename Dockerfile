@@ -86,6 +86,9 @@ RUN echo 'user ALL=(ALL:ALL) NOPASSWD:ALL' >> /etc/sudoers && \
 # Copy PulseAudio configuration
 RUN mv pulseaudio.conf /etc/dbus-1/system.d/pulseaudio.conf
 
+RUN echo "load-module module-null-sink sink_name=virtual_speaker sink_properties=device.description=Virtual-Speaker" >> /etc/pulse/default.pa
+RUN echo "load-module module-loopback source=@DEFAULT_MONITOR@ sink=virtual_speaker latency_msec=1" >> /etc/pulse/default.pa
+
 # Make entrypoint executable
 RUN chmod +x /app/entrypoint.sh
 

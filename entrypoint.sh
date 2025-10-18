@@ -44,12 +44,20 @@ sleep 3
 # Verify pulseaudio is running
 if pulseaudio --check 2>/dev/null || pgrep -x pulseaudio > /dev/null; then
     echo "PulseAudio started successfully"
-    # Create a null sink for virtual audio
-    pactl load-module module-null-sink sink_name=virtual_speaker sink_properties=device.description="Virtual_Speaker" 2>/dev/null || echo "Could not create virtual sink"
+    
+    # Create virtual audio sink for system audio capture
+    echo "Setting up virtual audio sink..."
+    pactl load-module module-null-sink sink_name=virtual_speaker sink_properties=device.description="Virtual_Speaker_for_Recording" 2>/dev/null || echo "Virtual sink already exists or failed"
+    
+    # Create loopback from default monitor to virtual sink
+    pactl load-module module-loopback source=@DEFAULT_MONITOR@ sink=virtual_speaker latency_msec=1 2>/dev/null || echo "Loopback already exists or failed"
+    
+    # List audio sources for debugging
+    echo "Available audio sources:"
+    pactl list short sources 2>/dev/null || echo "Could not list audio sources"
 else
     echo "WARNING: PulseAudio may not be running properly"
-    ps aux | grep pulse
-    echo "Attempting to continue without PulseAudio..."
+    echo "Attempting to continue..."
 fi
 
 # List available audio devices 

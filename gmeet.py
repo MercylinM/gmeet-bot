@@ -15,7 +15,6 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from queue import Queue, Empty
 
-
 import undetected_chromedriver as uc
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
@@ -49,7 +48,6 @@ def keep_alive():
             else:
                 print(f"Keep-alive ping failed with status: {response.status_code}")
 
-            
             time.sleep(600)
         except Exception as e:
             print(f"Keep-alive error: {e}")
@@ -57,7 +55,6 @@ def keep_alive():
 
 keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
 keep_alive_thread.start()
-
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -158,9 +155,7 @@ def cleanup_bot():
     
     if bot_state['audio_streamer']:
         try:
-            bot_state['audio_streamer'].is_streaming = False
-            if bot_state['audio_streamer'].stream_process:
-                bot_state['audio_streamer'].stream_process.terminate()
+            bot_state['audio_streamer'].stop_streaming()
             print("Audio streamer stopped")
         except Exception as e:
             print(f"Error stopping audio streamer: {e}")
@@ -243,7 +238,7 @@ class RealtimeAudioStreamer:
             return False
 
     def _is_websocket_open(self):
-        """Check if WebSocket connection is open - FIXED VERSION"""
+        """Check if WebSocket connection is open"""
         if not self.websocket:
             return False
         
@@ -283,8 +278,8 @@ class RealtimeAudioStreamer:
         return [capture_thread, sender_thread]
 
     def _capture_audio(self):
-        """Capture audio using sox and put it in the queue"""
-        print("Starting audio capture...")
+        """Capture system audio output (speakers) instead of microphone input"""
+        print("Starting system audio capture...")
 
         try:
             subprocess.run(["sox", "--version"], capture_output=True, check=True)
@@ -294,38 +289,38 @@ class RealtimeAudioStreamer:
             self.is_streaming = False
             return
 
-        # Check if we're in production (e.g., by environment variable)
-        in_production = os.getenv("FLASK_ENV", "").lower() == "production" or \
-                        os.getenv("RUN_AS_SERVER", "").lower() == "true"
+        # Always use system audio capture in production
+        self._setup_system_audio_capture()
 
-        if in_production:
-            # Use PulseAudio virtual speaker monitor for capturing output audio
-            try:
-                result = subprocess.run(
-                    ["pactl", "list", "short", "sources"],
-                    capture_output=True,
-                    text=True,
-                    check=True
-                )
-                print(f"Available audio sources:\n{result.stdout}")
-            except Exception as e:
-                print(f"Could not list audio sources: {e}")
-
-            audio_source = "virtual_speaker.monitor"  # Your virtual sink monitor
-
+    def _setup_system_audio_capture(self):
+        """Set up system audio capture using PulseAudio"""
+        print("Setting up system audio capture...")
+        
+        try:
+            # Create virtual audio sink for capturing system audio
+            self._setup_virtual_audio_sink()
+            
+            # Use the virtual sink monitor to capture all system audio
+            audio_source = "virtual_speaker.monitor"
+            
+            print(f"Capturing system audio from: {audio_source}")
+            
+            # Use parec to capture from the virtual sink monitor
             parec_command = [
                 "parec",
                 "--format=s16le",
                 "--rate=16000",
                 "--channels=1",
-                f"--device={audio_source}"
+                f"--device={audio_source}",
+                "--latency=1"
             ]
 
+            # Use sox to process the audio
             sox_command = [
                 "sox",
                 "-q",
                 "-t", "raw",
-                "-r", "16000",
+                "-r", "16000", 
                 "-c", "1",
                 "-b", "16",
                 "-e", "signed-integer",
@@ -334,83 +329,130 @@ class RealtimeAudioStreamer:
                 "-"
             ]
 
-            print(f"Parec command: {' '.join(parec_command)}")
-            print(f"Sox command: {' '.join(sox_command)}")
+            print(f"Starting audio capture process...")
+            parec_process = subprocess.Popen(
+                parec_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=8192
+            )
+            sox_process = subprocess.Popen(
+                sox_command, stdin=parec_process.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=8192
+            )
+            parec_process.stdout.close()
+            self.stream_process = sox_process
+            
+            print(f"System audio capture started (Sox PID: {sox_process.pid}, Parec PID: {parec_process.pid})")
+            self._read_audio_data()
+            
+        except Exception as e:
+            print(f"System audio capture error: {e}")
+            # Fallback to default monitor
+            self._fallback_audio_capture()
 
-            try:
-                parec_process = subprocess.Popen(
-                    parec_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=4096
-                )
-                sox_process = subprocess.Popen(
-                    sox_command, stdin=parec_process.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=4096
-                )
-                parec_process.stdout.close()
-                self.stream_process = sox_process
-                print(f"Started audio capture (Sox PID: {sox_process.pid}, Parec PID: {parec_process.pid})")
+    def _setup_virtual_audio_sink(self):
+        """Create and setup virtual audio sink for system audio capture"""
+        try:
+            print("Setting up virtual audio sink...")
+            
+            # Check if virtual sink already exists
+            result = subprocess.run(
+                ["pactl", "list", "short", "sinks"],
+                capture_output=True, text=True, check=True
+            )
+            
+            if "virtual_speaker" not in result.stdout:
+                print("Creating virtual audio sink...")
+                # Create null sink (virtual speaker)
+                subprocess.run([
+                    "pactl", "load-module", "module-null-sink", 
+                    "sink_name=virtual_speaker", 
+                    "sink_properties=device.description=Virtual-Speaker-for-Recording"
+                ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                
+                # Create loopback from default output to virtual sink
+                subprocess.run([
+                    "pactl", "load-module", "module-loopback", 
+                    "source=@DEFAULT_MONITOR@", 
+                    "sink=virtual_speaker",
+                    "latency_msec=1"
+                ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                
+                print("Virtual audio sink created successfully")
+            else:
+                print("Virtual audio sink already exists")
+                
+            # List available audio sources for debugging
+            print("Available audio sources:")
+            subprocess.run(["pactl", "list", "short", "sources"], check=False)
+                
+        except Exception as e:
+            print(f"Warning: Could not setup virtual audio sink: {e}")
 
-                chunk_size = 2048
+    def _fallback_audio_capture(self):
+        """Fallback method using default system audio monitor"""
+        try:
+            print("Using fallback system audio capture...")
+            
+            # Use default system monitor directly
+            audio_source = "@DEFAULT_MONITOR@"
+            
+            parec_command = [
+                "parec",
+                "--format=s16le",
+                "--rate=16000", 
+                "--channels=1",
+                f"--device={audio_source}",
+                "--latency=1"
+            ]
 
-                while self.is_streaming and not self._stop_event.is_set() and self.stream_process and self.stream_process.poll() is None:
-                    try:
-                        audio_data = self.stream_process.stdout.read(chunk_size)
-                        if not audio_data:
-                            time.sleep(0.1)
-                            continue
-                        self.audio_queue.put(audio_data)
-                        self.bytes_transmitted += len(audio_data)
-                        self.last_activity_time = datetime.datetime.now()
-
-                        if self.bytes_transmitted % (100 * 1024) < chunk_size:
-                            print(f"📊 Audio captured: {self.bytes_transmitted / 1024:.2f} KB")
-                    except Exception as e:
-                        print(f"Error reading audio data: {e}")
-                        break
-
-            except Exception as e:
-                print(f"Audio capture error: {e}")
-            finally:
-                self._cleanup_audio_capture()
-
-        else:
-            # Original localhost capture method for simplicity, like "sox -d" capturing mic directly
             sox_command = [
                 "sox",
                 "-q",
-                "-d",  # default audio device (microphone)
+                "-t", "raw",
                 "-r", "16000",
                 "-c", "1",
                 "-b", "16",
-                "-e", "signed-integer",
+                "-e", "signed-integer", 
+                "-",
                 "-t", "raw",
                 "-"
             ]
-            print(f"Sox command (localhost): {' '.join(sox_command)}")
+
+            print(f"Fallback: Capturing from {audio_source}")
+            parec_process = subprocess.Popen(
+                parec_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=8192
+            )
+            sox_process = subprocess.Popen(
+                sox_command, stdin=parec_process.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=8192
+            )
+            parec_process.stdout.close()
+            self.stream_process = sox_process
+            
+            self._read_audio_data()
+            
+        except Exception as e:
+            print(f"Fallback audio capture error: {e}")
+            self.is_streaming = False
+
+    def _read_audio_data(self):
+        """Read audio data from the stream process"""
+        chunk_size = 4096
+        
+        while self.is_streaming and not self._stop_event.is_set() and self.stream_process and self.stream_process.poll() is None:
             try:
-                self.stream_process = subprocess.Popen(
-                    sox_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=4096
-                )
-                chunk_size = 2048
+                audio_data = self.stream_process.stdout.read(chunk_size)
+                if not audio_data:
+                    time.sleep(0.05)
+                    continue
+                    
+                self.audio_queue.put(audio_data)
+                self.bytes_transmitted += len(audio_data)
+                self.last_activity_time = datetime.datetime.now()
 
-                while self.is_streaming and not self._stop_event.is_set() and self.stream_process and self.stream_process.poll() is None:
-                    try:
-                        audio_data = self.stream_process.stdout.read(chunk_size)
-                        if not audio_data:
-                            time.sleep(0.1)
-                            continue
-                        self.audio_queue.put(audio_data)
-                        self.bytes_transmitted += len(audio_data)
-                        self.last_activity_time = datetime.datetime.now()
-
-                        if self.bytes_transmitted % (100 * 1024) < chunk_size:
-                            print(f"📊 Audio captured: {self.bytes_transmitted / 1024:.2f} KB")
-                    except Exception as e:
-                        print(f"Error reading audio data: {e}")
-                        break
-
+                if self.bytes_transmitted % (500 * 1024) < chunk_size:
+                    print(f"📊 System audio captured: {self.bytes_transmitted / 1024:.2f} KB")
+                    
             except Exception as e:
-                print(f"Audio capture error (localhost): {e}")
-            finally:
-                self._cleanup_audio_capture()
+                print(f"Error reading audio data: {e}")
+                break
 
     def _run_websocket_sender(self):
         """Run WebSocket sender in a separate event loop"""
@@ -554,7 +596,6 @@ def make_request(url, headers, method="GET", data=None, files=None):
         response = requests.get(url, headers=headers)
     return response.json()
 
-
 async def google_sign_in(email, password, driver):
     driver.get("https://accounts.google.com")
     sleep(1)
@@ -574,7 +615,6 @@ async def google_sign_in(email, password, driver):
     password_field.send_keys(Keys.RETURN)
     sleep(5)
     driver.save_screenshot("screenshots/signed_in.png")
-
 
 def get_chrome_version():
     """Try to detect the installed Chrome version"""
@@ -609,7 +649,6 @@ def cleanup_chrome_processes():
     except Exception as e:
         print(f"Error cleaning up Chrome processes: {e}")
 
-
 async def join_meet():
     bot_state['status'] = 'running'
 
@@ -635,16 +674,8 @@ async def join_meet():
             
     except Exception as e:
         print(f"Cannot connect to backend: {e}")
-        
 
-    # print("Cleaning screenshots")
-    # if os.path.exists("screenshots"):
-    #     for f in os.listdir("screenshots"):
-    #         os.remove(f"screenshots/{f}")
-    # else:
-    #     os.mkdir("screenshots")
-
-    print("Setting up audio recording with sox")
+    print("Setting up system audio recording...")
     try:
         subprocess.run(["sox", "--version"], capture_output=True, check=True)
         print("sox is available for audio recording")
@@ -744,7 +775,7 @@ async def join_meet():
 
     print(f"Navigating to meet link: {meet_link}")
     driver.get(meet_link)
-    sleep(3)
+    sleep(5)
 
     try:
         driver.execute_cdp_cmd(
@@ -767,15 +798,12 @@ async def join_meet():
         cleanup_bot()
         return
 
-    # print("Taking screenshot")
-    # driver.save_screenshot("screenshots/initial.png")
-
     try:
         driver.find_element(
             By.XPATH,
             "/html/body/div/div[3]/div[2]/div/div/div/div/div[2]/div/div[1]/button",
         ).click()
-        sleep(1)
+        sleep(2)
     except:
         print("No popup")
 
@@ -788,10 +816,6 @@ async def join_meet():
         print("Try to dismiss missing mic")
         driver.find_element(By.CLASS_NAME, "VfPpkd-vQzf8d").find_element(By.XPATH, "..")
         sleep(1)
-        # driver.save_screenshot("screenshots/missing_mic.png")
-
-        # with open("screenshots/webpage.html", "w") as f:
-        #     f.write(driver.page_source)
         missing_mic = True
     except:
         pass
@@ -803,7 +827,6 @@ async def join_meet():
             "/html/body/div/div[3]/div[2]/div/div/div/div/div[2]/div/div[1]/button",
         ).click()
         sleep(1)
-        # driver.save_screenshot("screenshots/allow_microphone.png")
     except:
         print("No Allow Microphone popup")
 
@@ -817,18 +840,6 @@ async def join_meet():
         print("No microphone to disable")
 
     sleep(1)
-    # driver.save_screenshot("screenshots/disable_microphone.png")
-
-    print("Disable camera")
-    # if not missing_mic:
-    #     driver.find_element(
-    #         By.XPATH,
-    #         '//*[@id="yDmH0d"]/c-wiz/div/div/div[14]/div[3]/div/div[2]/div[4]/div/div/div[1]/div[1]/div/div[6]/div[2]/div',
-    #     ).click()
-    #     sleep(1)
-    # else:
-    #     print("assuming missing mic = missing camera")
-    # driver.save_screenshot("screenshots/disable_camera.png")
 
     wait = WebDriverWait(driver, 10)
     try:
@@ -878,7 +889,6 @@ async def join_meet():
                     join_button = driver.find_element(By.XPATH, selector)
                     join_button.click()
                     sleep(2)
-                    # driver.save_screenshot("screenshots/join_button_clicked.png")
                     button_clicked = True
                     break
                 except:
@@ -888,7 +898,6 @@ async def join_meet():
                 print("Could not find or click the join button")
     except Exception as e:
         print(f"Error setting name: {e}")
-        # driver.save_screenshot("screenshots/name_error.png")
 
     if bot_state['status'] == 'stopping':
         print("Stop signal received, cleaning up")
@@ -940,7 +949,6 @@ async def join_meet():
                 join_button = wait.until(EC.element_to_be_clickable((By.XPATH, selector)))
                 join_button.click()
                 print(f"Clicked join button using selector: {selector}")
-                # driver.save_screenshot("screenshots/join_button_clicked.png")
                 joined = True
                 break
             except TimeoutException:
@@ -948,10 +956,8 @@ async def join_meet():
         
         if not joined:
             print("Could not find any join button")
-            # driver.save_screenshot("screenshots/no_join_button.png")
     except Exception as e:
         print(f"Error handling join button: {e}")
-        # driver.save_screenshot("screenshots/join_button_error.png")
 
     if bot_state['status'] == 'stopping':
         print("Stop signal received, cleaning up")
@@ -960,7 +966,6 @@ async def join_meet():
 
     print("Waiting for meeting to load...")
     sleep(10)
-    # driver.save_screenshot("screenshots/meeting_loading.png")
 
     try:
         wait = WebDriverWait(driver, 5)
@@ -989,38 +994,27 @@ async def join_meet():
         
         if in_meeting:
             print("Successfully joined the meeting!")
-            # driver.save_screenshot("screenshots/in_meeting.png")
         else:
             print("Could not confirm if in meeting, proceeding anyway...")
-            # driver.save_screenshot("screenshots/meeting_status_unknown.png")
     except Exception as e:
         print(f"Error checking meeting status: {e}")
-        # driver.save_screenshot("screenshots/meeting_status_error.png")
 
     if bot_state['status'] == 'stopping':
         print("Stop signal received, cleaning up")
         cleanup_bot()
         return
     
-    # try:
-    #     print("Attempting to go fullscreen...")
-    #     driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.F11)
-    #     sleep(1)
-    #     print("Pressed F11 to go fullscreen")
-    # except Exception as e:
-    #     print(f"Error going fullscreen: {e}")
-
     duration_minutes = int(os.getenv("DURATION_IN_MINUTES", "60"))  
     duration_seconds = duration_minutes * 60
 
     audio_streamer = RealtimeAudioStreamer(backend_url)
     bot_state['audio_streamer'] = audio_streamer
 
-    print("\nStarting recording and streaming...")
+    print("\nStarting system audio recording and streaming...")
     print(f"Duration: {duration_minutes} minutes")
     
     streaming_thread = audio_streamer.start_realtime_streaming(duration_minutes)
-    print(f"Recording for {duration_minutes} minutes...")
+    print(f"Recording system audio for {duration_minutes} minutes...")
 
     elapsed = 0
     last_status_check = 0
@@ -1040,7 +1034,6 @@ async def join_meet():
             print(f"Status check at {elapsed}s: Connected={audio_streamer.is_connected}, "
                   f"Bytes sent={audio_streamer.bytes_transmitted/1024:.2f}KB")
             last_status_check = elapsed
-    
     
     if streaming_thread:
         for thread in streaming_thread:
