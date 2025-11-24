@@ -79,6 +79,8 @@ def start_bot():
         data = request.json
         meet_link = data.get('meet_link') or data.get('meetLink')
         duration = data.get('duration', 60)
+        token = data.get('token')
+        interview_id = data.get('interview_id')
 
         if not meet_link:
             return jsonify({
@@ -95,7 +97,7 @@ def start_bot():
 
         def run_bot():
             try:
-                asyncio.run(join_meet())
+                asyncio.run(join_meet(meet_link, duration, token, interview_id))
             except Exception as e:
                 print(f"Error in bot thread: {e}")
                 bot_state['status'] = 'error'
@@ -289,7 +291,6 @@ class RealtimeAudioStreamer:
             self.is_streaming = False
             return
 
-        # Always use system audio capture in production
         self._setup_system_audio_capture()
 
     def _setup_system_audio_capture(self):
@@ -297,15 +298,12 @@ class RealtimeAudioStreamer:
         print("Setting up system audio capture...")
         
         try:
-            # Create virtual audio sink for capturing system audio
             self._setup_virtual_audio_sink()
             
-            # Use the virtual sink monitor to capture all system audio
             audio_source = "virtual_speaker.monitor"
             
             print(f"Capturing system audio from: {audio_source}")
             
-            # Use parec to capture from the virtual sink monitor
             parec_command = [
                 "parec",
                 "--format=s16le",
@@ -315,7 +313,6 @@ class RealtimeAudioStreamer:
                 "--latency=1"
             ]
 
-            # Use sox to process the audio
             sox_command = [
                 "sox",
                 "-q",
@@ -324,7 +321,7 @@ class RealtimeAudioStreamer:
                 "-c", "1",
                 "-b", "16",
                 "-e", "signed-integer",
-                "-",  # stdin from parec
+                "-",  
                 "-t", "raw",
                 "-"
             ]
@@ -344,7 +341,6 @@ class RealtimeAudioStreamer:
             
         except Exception as e:
             print(f"System audio capture error: {e}")
-            # Fallback to default monitor
             self._fallback_audio_capture()
 
     def _setup_virtual_audio_sink(self):
@@ -352,7 +348,6 @@ class RealtimeAudioStreamer:
         try:
             print("Setting up virtual audio sink...")
             
-            # Check if virtual sink already exists
             result = subprocess.run(
                 ["pactl", "list", "short", "sinks"],
                 capture_output=True, text=True, check=True
@@ -360,14 +355,12 @@ class RealtimeAudioStreamer:
             
             if "virtual_speaker" not in result.stdout:
                 print("Creating virtual audio sink...")
-                # Create null sink (virtual speaker)
                 subprocess.run([
                     "pactl", "load-module", "module-null-sink", 
                     "sink_name=virtual_speaker", 
                     "sink_properties=device.description=Virtual-Speaker-for-Recording"
                 ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 
-                # Create loopback from default output to virtual sink
                 subprocess.run([
                     "pactl", "load-module", "module-loopback", 
                     "source=@DEFAULT_MONITOR@", 
@@ -379,7 +372,6 @@ class RealtimeAudioStreamer:
             else:
                 print("Virtual audio sink already exists")
                 
-            # List available audio sources for debugging
             print("Available audio sources:")
             subprocess.run(["pactl", "list", "short", "sources"], check=False)
                 
@@ -391,7 +383,6 @@ class RealtimeAudioStreamer:
         try:
             print("Using fallback system audio capture...")
             
-            # Use default system monitor directly
             audio_source = "@DEFAULT_MONITOR@"
             
             parec_command = [
@@ -602,19 +593,19 @@ async def google_sign_in(email, password, driver):
     
     email_field = driver.find_element(By.NAME, "identifier")
     email_field.send_keys(email)
-    driver.save_screenshot("screenshots/email.png")
-    sleep(2)
+    # driver.save_screenshot("screenshots/email.png")
+    sleep(1)
     
     driver.find_element(By.ID, "identifierNext").click()
-    sleep(3)
-    driver.save_screenshot("screenshots/password.png")
+    sleep(2)
+    # driver.save_screenshot("screenshots/password.png")
     
     password_field = driver.find_element(By.NAME, "Passwd")
     password_field.click()
     password_field.send_keys(password)
     password_field.send_keys(Keys.RETURN)
-    sleep(5)
-    driver.save_screenshot("screenshots/signed_in.png")
+    sleep(3)
+    # driver.save_screenshot("screenshots/signed_in.png")
 
 def get_chrome_version():
     """Try to detect the installed Chrome version"""
@@ -649,12 +640,12 @@ def cleanup_chrome_processes():
     except Exception as e:
         print(f"Error cleaning up Chrome processes: {e}")
 
-async def join_meet():
+async def join_meet(meet_link, duration, token, interview_id):
     bot_state['status'] = 'running'
 
-    cleanup_chrome_processes()
+    # cleanup_chrome_processes()
 
-    meet_link = os.getenv("GMEET_LINK", "https://meet.google.com/mhj-bcdx-bgu")
+
     backend_url = os.getenv("BACKEND_URL", "http://localhost:3000")
     
     print(f"Starting recorder for {meet_link}")
@@ -775,7 +766,7 @@ async def join_meet():
 
     print(f"Navigating to meet link: {meet_link}")
     driver.get(meet_link)
-    sleep(5)
+    sleep(3)
 
     try:
         driver.execute_cdp_cmd(
@@ -807,48 +798,48 @@ async def join_meet():
     except:
         print("No popup")
 
-    print("Disable microphone")
-    sleep(5)
+    # print("Disable microphone")
+    # sleep(3)
 
-    missing_mic = False
+    # missing_mic = False
 
-    try:
-        print("Try to dismiss missing mic")
-        driver.find_element(By.CLASS_NAME, "VfPpkd-vQzf8d").find_element(By.XPATH, "..")
-        sleep(1)
-        missing_mic = True
-    except:
-        pass
+    # try:
+    #     print("Try to dismiss missing mic")
+    #     driver.find_element(By.CLASS_NAME, "VfPpkd-vQzf8d").find_element(By.XPATH, "..")
+    #     sleep(1)
+    #     missing_mic = True
+    # except:
+    #     pass
 
-    try:
-        print("Allow Microphone")
-        driver.find_element(
-            By.XPATH,
-            "/html/body/div/div[3]/div[2]/div/div/div/div/div[2]/div/div[1]/button",
-        ).click()
-        sleep(1)
-    except:
-        print("No Allow Microphone popup")
+    # try:
+    #     print("Allow Microphone")
+    #     driver.find_element(
+    #         By.XPATH,
+    #         "/html/body/div/div[3]/div[2]/div/div/div/div/div[2]/div/div[1]/button",
+    #     ).click()
+    #     sleep(1)
+    # except:
+    #     print("No Allow Microphone popup")
 
-    try:
-        print("Try to disable microphone")
-        driver.find_element(
-            By.XPATH,
-            '//*[@id="yDmH0d"]/c-wiz/div/div/div[14]/div[3]/div/div[2]/div[4]/div/div/div[1]/div[1]/div/div[6]/div[1]/div/div',
-        ).click()
-    except:
-        print("No microphone to disable")
+    # try:
+    #     print("Try to disable microphone")
+    #     driver.find_element(
+    #         By.XPATH,
+    #         '//*[@id="yDmH0d"]/c-wiz/div/div/div[14]/div[3]/div/div[2]/div[4]/div/div/div[1]/div[1]/div/div[6]/div[1]/div/div',
+    #     ).click()
+    # except:
+    #     print("No microphone to disable")
 
     sleep(1)
 
-    wait = WebDriverWait(driver, 10)
-    try:
-        disable_camera_button = wait.until(
-            EC.element_to_be_clickable((By.XPATH, '//*[@id="yDmH0d"]/c-wiz/div/div/div[14]/div[3]/div/div[2]/div[4]/div/div/div[1]/div[1]/div/div[6]/div[2]/div'))
-        )
-        disable_camera_button.click()
-    except TimeoutException:
-        print("Disable camera button not found or not clickable")
+    # wait = WebDriverWait(driver, 10)
+    # try:
+    #     disable_camera_button = wait.until(
+    #         EC.element_to_be_clickable((By.XPATH, '//*[@id="yDmH0d"]/c-wiz/div/div/div[14]/div[3]/div/div[2]/div[4]/div/div/div[1]/div[1]/div/div[6]/div[2]/div'))
+    #     )
+    #     disable_camera_button.click()
+    # except TimeoutException:
+    #     print("Disable camera button not found or not clickable")
     
     try:
         print("Try to set name")
@@ -965,7 +956,7 @@ async def join_meet():
         return
 
     print("Waiting for meeting to load...")
-    sleep(10)
+    sleep(5)
 
     try:
         wait = WebDriverWait(driver, 5)
@@ -1004,7 +995,7 @@ async def join_meet():
         cleanup_bot()
         return
     
-    duration_minutes = int(os.getenv("DURATION_IN_MINUTES", "60"))  
+    duration_minutes = duration  
     duration_seconds = duration_minutes * 60
 
     audio_streamer = RealtimeAudioStreamer(backend_url)
